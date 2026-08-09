@@ -125,8 +125,46 @@ jobs:
           printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$RUNNER_TEMP/minisign.key"
           chmod 0600 "$RUNNER_TEMP/minisign.key"
           unset MINISIGN_PRIVATE_KEY
-          (cd dist && sha256sum mini-singbox-linux-amd64 mini-singbox-linux-arm64 SBOM.spdx.json provenance.intoto.jsonl go-version-amd64.txt go-version-arm64.txt compiled-deps-linux-amd64.txt upstream-compiled-network-utilities.txt) > dist/SHA256SUMS
-          sha256sum LICENSE NOTICE README.md CHANGELOG.md SECURITY.md MIGRATION.md docs/release.md docs/nat-vps.md docs/v1.0.0-readiness.md docs/validation.md examples/config.json release/minisign.pub scripts/deploy.sh scripts/install.sh scripts/uninstall.sh scripts/mini-singboxctl packaging/systemd/mini-singbox.service packaging/systemd/mini-singbox-container.service packaging/openrc/mini-singbox >> dist/SHA256SUMS
+          release_files=(
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+            dist/SBOM.spdx.json
+            dist/provenance.intoto.jsonl
+            dist/go-version-amd64.txt
+            dist/go-version-arm64.txt
+            dist/compiled-deps-linux-amd64.txt
+            dist/upstream-compiled-network-utilities.txt
+            LICENSE
+            NOTICE
+            README.md
+            CHANGELOG.md
+            SECURITY.md
+            MIGRATION.md
+            docs/release.md
+            docs/nat-vps.md
+            docs/v1.0.0-readiness.md
+            docs/validation.md
+            examples/config.json
+            release/minisign.pub
+            scripts/deploy.sh
+            scripts/install.sh
+            scripts/uninstall.sh
+            scripts/mini-singboxctl
+            packaging/systemd/mini-singbox.service
+            packaging/systemd/mini-singbox-container.service
+            packaging/openrc/mini-singbox
+          )
+          duplicate_names="$(printf '%s\n' "${release_files[@]}" | sed 's|.*/||' | sort | uniq -d)"
+          test -z "$duplicate_names"
+          : > dist/SHA256SUMS
+          for release_file in "${release_files[@]}"; do
+            release_sha256="$(sha256sum "$release_file" | awk '{ print $1 }')"
+            release_name="${release_file##*/}"
+            printf '%s  %s\n' "$release_sha256" "$release_file" >> dist/SHA256SUMS
+            if [ "$release_name" != "$release_file" ]; then
+              printf '%s  %s\n' "$release_sha256" "$release_name" >> dist/SHA256SUMS
+            fi
+          done
           printf '%s\n' "$MINISIGN_PASSWORD" | minisign -Sm dist/SHA256SUMS -s "$RUNNER_TEMP/minisign.key" -x dist/SHA256SUMS.minisig
           unset MINISIGN_PASSWORD
           minisign -Vm dist/SHA256SUMS -x dist/SHA256SUMS.minisig -p release/minisign.pub >/dev/null
