@@ -642,8 +642,9 @@ curl --fail --location --proto '=https' --tlsv1.2 \
 curl --fail --location --proto '=https' --tlsv1.2 \
 	--retry 3 --connect-timeout 20 --output "$CHECKSUMS" "$RELEASE_BASE/SHA256SUMS"
 if [ "$SIGNED_RELEASE" -eq 1 ]; then
-	[ -f "$MINISIGN_PUBLIC_KEY" ] && [ ! -L "$MINISIGN_PUBLIC_KEY" ] || \
+	if [ ! -f "$MINISIGN_PUBLIC_KEY" ] || [ -L "$MINISIGN_PUBLIC_KEY" ]; then
 		fail "pinned minisign public key is missing or unsafe: $MINISIGN_PUBLIC_KEY"
+	fi
 	curl --fail --location --proto '=https' --tlsv1.2 \
 		--retry 3 --connect-timeout 20 --output "$CHECKSUM_SIGNATURE" \
 		"$RELEASE_BASE/SHA256SUMS.minisig"
@@ -654,8 +655,9 @@ fi
 verify_signed_checkout_file() {
 	local_file="$1"
 	manifest_name="$2"
-	[ -f "$local_file" ] && [ ! -L "$local_file" ] || \
+	if [ ! -f "$local_file" ] || [ -L "$local_file" ]; then
 		fail "release checkout file is missing or unsafe: $manifest_name"
+	fi
 	expected="$(awk -v asset="$manifest_name" '$2 == asset || $2 == "*" asset { print $1 }' "$CHECKSUMS")"
 	printf '%s\n' "$expected" | grep -Eq '^[0-9a-f]{64}$' || \
 		fail "signed checksum manifest does not contain one valid SHA-256 for $manifest_name"
