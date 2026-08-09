@@ -1,0 +1,150 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Validate exact tag
+        run: |
+          printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          test "$(git tag --points-at HEAD | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
+          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          test -z "$(git status --porcelain)"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.5
+          cache: true
+      - run: test "$(go env GOVERSION)" = go1.26.5
+      - run: test -z "$(gofmt -l .)"
+      - run: go mod verify
+      - run: go vet -tags with_utls ./...
+      - run: go test -tags with_utls ./...
+      - run: go test -race -tags with_utls ./...
+      - run: go test -tags fuzz -run '^$' -fuzz=FuzzDecode -fuzztime=30s ./internal/config
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          "$(go env GOPATH)/bin/govulncheck" -tags with_utls ./...
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
+        run: |
+          set -eu
+          mkdir dist
+          build_time="$(git show -s --format=%cI HEAD)"
+          ldflags="-s -w -buildid= -X github.com/XDuke/mini-singbox/internal/version.Version=$VERSION -X github.com/XDuke/mini-singbox/internal/version.Commit=$COMMIT -X github.com/XDuke/mini-singbox/internal/version.BuildTime=$build_time -X github.com/XDuke/mini-singbox/internal/version.Dirty=false"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o dist/mini-singbox-linux-amd64 ./cmd/mini-singbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o dist/mini-singbox-linux-arm64 ./cmd/mini-singbox
+          file dist/mini-singbox-linux-amd64 | grep -q 'statically linked'
+          file dist/mini-singbox-linux-arm64 | grep -q 'statically linked'
+          ! ldd dist/mini-singbox-linux-amd64 2>&1 | grep -q '=>'
+          dist/mini-singbox-linux-amd64 version | grep -Fx "mini-singbox $VERSION"
+          dist/mini-singbox-linux-amd64 version | grep -Fx "git_commit $COMMIT"
+          dist/mini-singbox-linux-amd64 version | grep -Fx 'target linux/amd64'
+          dist/mini-singbox-linux-amd64 version | grep -Fx 'dirty_build false'
+          go version -m dist/mini-singbox-linux-amd64 | tee dist/go-version-amd64.txt
+          go version -m dist/mini-singbox-linux-arm64 | tee dist/go-version-arm64.txt
+          go tool nm dist/mini-singbox-linux-amd64 > dist/nm-amd64.txt 2>&1 || grep -q 'no symbols' dist/nm-amd64.txt
+      - name: Compiled dependency and forbidden-content audit
+        run: |
+          GOOS=linux GOARCH=amd64 go list -tags with_utls -deps ./cmd/mini-singbox | sort -u > dist/compiled-deps-linux-amd64.txt
+          if grep -E 'github.com/sagernet/gvisor|sing-box/protocol/tun|sing-box/transport/wireguard|sing-box/endpoint/wireguard' dist/compiled-deps-linux-amd64.txt; then exit 1; fi
+          grep -E '^github.com/sagernet/(sing-tun|nftables)(/|$)' dist/compiled-deps-linux-amd64.txt > dist/upstream-compiled-network-utilities.txt || true
+          if strings dist/mini-singbox-linux-amd64 | grep -E 'panel-token|panel-url|users\.json|/stats|/health'; then exit 1; fi
+          test -z "$(git grep -nI -e 'mini-sb-local' -e 'mini-sb-agent' -e 'ashvvvvv' -e 'MINI_SB_' -- . ':(exclude).github/workflows/ci.yml' ':(exclude).github/workflows/release.yml' || true)"
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0.24.0
+        with:
+          file: dist/mini-singbox-linux-amd64
+          format: spdx-json
+          output-file: dist/SBOM.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Build provenance
+        id: provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+      - name: Preserve provenance bundle
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE_PATH" dist/provenance.intoto.jsonl
+      - name: Assemble and sign checksums
+        env:
+          MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -eu
+          test -n "$MINISIGN_PRIVATE_KEY"
+          test -n "$MINISIGN_PASSWORD"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+          trap 'rm -f "$RUNNER_TEMP/minisign.key"' EXIT
+          printf '%s\n' "$MINISIGN_PRIVATE_KEY" > "$RUNNER_TEMP/minisign.key"
+          chmod 0600 "$RUNNER_TEMP/minisign.key"
+          unset MINISIGN_PRIVATE_KEY
+          (cd dist && sha256sum mini-singbox-linux-amd64 mini-singbox-linux-arm64 SBOM.spdx.json provenance.intoto.jsonl go-version-amd64.txt go-version-arm64.txt compiled-deps-linux-amd64.txt upstream-compiled-network-utilities.txt) > dist/SHA256SUMS
+          sha256sum LICENSE NOTICE README.md CHANGELOG.md SECURITY.md MIGRATION.md docs/release.md docs/nat-vps.md docs/v1.0.0-readiness.md docs/validation.md examples/config.json release/minisign.pub scripts/deploy.sh scripts/install.sh scripts/uninstall.sh scripts/mini-singboxctl packaging/systemd/mini-singbox.service packaging/systemd/mini-singbox-container.service packaging/openrc/mini-singbox >> dist/SHA256SUMS
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -Sm dist/SHA256SUMS -s "$RUNNER_TEMP/minisign.key" -x dist/SHA256SUMS.minisig
+          unset MINISIGN_PASSWORD
+          minisign -Vm dist/SHA256SUMS -x dist/SHA256SUMS.minisig -p release/minisign.pub >/dev/null
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-audit-${{ github.ref_name }}
+          path: |
+            dist/compiled-deps-linux-amd64.txt
+            dist/upstream-compiled-network-utilities.txt
+            dist/go-version-amd64.txt
+            dist/go-version-arm64.txt
+            dist/nm-amd64.txt
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          files: |
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+            dist/SHA256SUMS
+            dist/SHA256SUMS.minisig
+            dist/SBOM.spdx.json
+            dist/provenance.intoto.jsonl
+            LICENSE
+            NOTICE
+            README.md
+            CHANGELOG.md
+            SECURITY.md
+            MIGRATION.md
+            docs/release.md
+            docs/nat-vps.md
+            docs/v1.0.0-readiness.md
+            docs/validation.md
+            examples/config.json
+            release/minisign.pub
+            scripts/deploy.sh
+            scripts/install.sh
+            scripts/uninstall.sh
+            scripts/mini-singboxctl
+            packaging/systemd/mini-singbox.service
+            packaging/systemd/mini-singbox-container.service
+            packaging/openrc/mini-singbox

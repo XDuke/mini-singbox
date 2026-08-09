@@ -1,0 +1,6 @@
+local-artifacts/
+builds/
+.tmp-*/
+/mini-singbox
+/mini-singbox.exe
+*.test

@@ -1,0 +1,296 @@
+# mini-singbox
+
+[![CI](https://github.com/XDuke/mini-singbox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/XDuke/mini-singbox/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/XDuke/mini-singbox)](https://github.com/XDuke/mini-singbox/releases/latest)
+[![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+
+`mini-singbox` 是面向个人、小型 NAT VPS、LXC 和 128 MiB 容器的精简 sing-box
+服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
+`v1.13.16`，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、
+限速或自动更新守护进程。
+
+## 主要特点
+
+- 单进程、单个官方 sing-box Box，每个协议只有一个本地凭据；
+- 严格的专用 JSON Schema，拒绝未知字段和任意原生 sing-box 配置；
+- `check`、`generate` 和空载运行不执行项目级主动联网；
+- 自动探测公网 IPv4/IPv6，并从经过 TLS 1.3、HTTP/2 和证书验证的候选中选择
+  Reality 握手目标；
+- 支持共享 NAT 的公网端口与内部监听端口分离；
+- 自动生成三种标准分享链接、PNG 二维码和终端二维码；
+- 只下载当前精确版本的 CI 静态二进制，不在小虚拟机编译；
+- 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
+- systemd/OpenRC 专用非 root 用户，默认 `GOMAXPROCS=1`、`GOMEMLIMIT=48MiB`、
+  `GOGC=70`。
+
+## 协议和默认端口
+
+| 协议 | 内部端口 | 传输 | 客户端交付 |
+|---|---:|---|---|
+| VLESS Reality | `20001/tcp` | TCP + Reality | `vless://`、二维码 |
+| Hysteria2 | `20002/udp` | QUIC/UDP + TLS 1.3 | `hysteria2://`、二维码 |
+| AnyTLS | `20003/tcp` | TCP + TLS 1.3 | `anytls://`、二维码 |
+
+Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。共享 NAT
+服务器可以使用任意不同的公网端口映射到以上内部端口。
+
+## 一行部署
+
+推荐 Debian 12/13 或 Ubuntu 24.04 的 systemd 环境。下面的命令以 Bash 开头，
+克隆精确的 `v1.0.0` 标签后运行签名校验部署器：
+
+```bash
+bash -c 'set -euo pipefail; tag=v1.0.0; dir=mini-singbox; test ! -e "$dir" || { echo "$dir already exists" >&2; exit 1; }; git clone --branch "$tag" --depth 1 https://github.com/XDuke/mini-singbox.git "$dir"; cd "$dir"; if (( EUID == 0 )); then ./scripts/deploy.sh; else sudo ./scripts/deploy.sh; fi'
+```
+
+该命令不会使用 `curl | bash`，也不会下载 `latest` 或第三方二进制。仓库内容可以先
+检查再执行；`deploy.sh` 只接受当前源码提交对应的正式标签或提交专属候选标签。
+
+分步执行方式：
+
+```sh
+git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+cd mini-singbox
+sudo ./scripts/deploy.sh
+```
+
+部署器会自动：
+
+1. 识别 amd64/arm64 和普通 VM/受限容器；
+2. 安装最少的运行和校验工具；
+3. 探测公网地址并优选 Reality 目标；
+4. 检查端口占用和协议端口冲突；
+5. 下载正式 Release 的静态二进制；
+6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
+7. 生成安全凭据、证书、分享链接和二维码；
+8. 安装非 root 服务并检查配置、监听端口和启动状态；
+9. 为已有安装创建可回滚备份。
+
+脚本不会修改云平台安全组、防火墙或 NAT 映射。
+
+## 共享 NAT 部署
+
+先在服务商面板创建三条映射，再执行：
+
+```sh
+sudo env \
+  MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
+  MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
+  MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
+  ./scripts/deploy.sh
+```
+
+- Reality：公网 TCP → `20001/tcp`
+- Hysteria2：公网 UDP → `20002/udp`
+- AnyTLS：公网 TCP → `20003/tcp`
+
+示例数字必须替换成面板实际分配值。完整说明见
+[NAT VPS 指南](docs/nat-vps.md)。
+
+## 常用部署选项
+
+| 目的 | 命令 |
+|---|---|
+| 保留配置升级/重装 | `sudo ./scripts/deploy.sh` |
+| 重新生成全部凭据 | `sudo env MINI_SINGBOX_REGENERATE=1 ./scripts/deploy.sh` |
+| 只刷新公网地址、端口和二维码 | `sudo env MINI_SINGBOX_REFRESH_DELIVERY=1 ... ./scripts/deploy.sh` |
+| 强制使用 IPv4 | `sudo env MINI_SINGBOX_IP_FAMILY=4 ./scripts/deploy.sh` |
+| 强制使用 IPv6 | `sudo env MINI_SINGBOX_IP_FAMILY=6 ./scripts/deploy.sh` |
+| 只启用 Reality | `sudo env MINI_SINGBOX_PROTOCOLS=reality ./scripts/deploy.sh` |
+| 只启用 Hysteria2 | `sudo env MINI_SINGBOX_PROTOCOLS=hy2 ./scripts/deploy.sh` |
+| 只启用 AnyTLS | `sudo env MINI_SINGBOX_PROTOCOLS=anytls ./scripts/deploy.sh` |
+| Reality + AnyTLS | `sudo env MINI_SINGBOX_PROTOCOLS=reality,anytls ./scripts/deploy.sh` |
+
+普通升级不会轮换 UUID、密码或私钥。只有 `MINI_SINGBOX_REGENERATE=1` 会使旧客户端
+配置失效。修改 NAT 公网端口时使用 `MINI_SINGBOX_REFRESH_DELIVERY=1`。
+
+## 全部部署变量
+
+| 变量 | 默认值 | 用途 |
+|---|---|---|
+| `MINI_SINGBOX_PROTOCOLS` | `reality,hy2,anytls` | 启用协议，逗号分隔 |
+| `MINI_SINGBOX_LISTEN` | `::` | 内部监听 IP 字面量 |
+| `MINI_SINGBOX_REALITY_PORT` | `20001` | Reality 内部 TCP 端口 |
+| `MINI_SINGBOX_HY2_PORT` | `20002` | Hysteria2 内部 UDP 端口 |
+| `MINI_SINGBOX_ANYTLS_PORT` | `20003` | AnyTLS 内部 TCP 端口 |
+| `MINI_SINGBOX_PUBLIC_ADDRESS` | 自动探测 | 客户端连接的公网 IP/域名 |
+| `MINI_SINGBOX_PUBLIC_REALITY_PORT` | 同内部端口 | Reality 公网 TCP 端口 |
+| `MINI_SINGBOX_PUBLIC_HY2_PORT` | 同内部端口 | Hysteria2 公网 UDP 端口 |
+| `MINI_SINGBOX_PUBLIC_ANYTLS_PORT` | 同内部端口 | AnyTLS 公网 TCP 端口 |
+| `MINI_SINGBOX_IP_FAMILY` | `auto` | `auto`、`4` 或 `6` |
+| `MINI_SINGBOX_REALITY_SERVER_NAME` | 自动优选 | Reality Server Name |
+| `MINI_SINGBOX_REALITY_HANDSHAKE` | 优选域名的 `443` | Reality 握手 `HOST:PORT` |
+| `MINI_SINGBOX_REALITY_CANDIDATES` | 内置四个域名 | 最多 12 个候选域名 |
+| `MINI_SINGBOX_TLS_SAN` | 公网地址 | HY2/AnyTLS 证书 SAN |
+| `MINI_SINGBOX_AUTO_DETECT` | `1` | `0` 关闭公网地址和目标探测 |
+| `MINI_SINGBOX_REGENERATE` | `0` | `1` 备份并重新生成配置 |
+| `MINI_SINGBOX_REFRESH_DELIVERY` | `0` | `1` 保留凭据刷新交付文件 |
+| `MINI_SINGBOX_RELEASE_TAG` | 当前源码标签 | 高级用途；仍校验完整提交 |
+| `MINI_SINGBOX_MINISIGN_PUBKEY_FILE` | 仓库固定公钥 | 覆盖签名公钥路径 |
+
+关闭自动探测时必须显式提供所需值：
+
+```sh
+sudo env \
+  MINI_SINGBOX_AUTO_DETECT=0 \
+  MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10 \
+  MINI_SINGBOX_TLS_SAN=203.0.113.10 \
+  MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com \
+  MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
+  ./scripts/deploy.sh
+```
+
+## 运维命令
+
+一键部署会安装 `/usr/local/bin/mini-singboxctl`。它是按需执行的本地工具，不常驻、
+不监听端口、不联网。
+
+| 命令 | 作用 |
+|---|---|
+| `sudo mini-singboxctl status` | 检查版本、配置、服务、内存、任务、端口和证书 |
+| `sudo mini-singboxctl check` | 仅校验配置，不启动监听器 |
+| `sudo mini-singboxctl certificate` | 检查 TLS 证书到期时间 |
+| `sudo mini-singboxctl qr reality` | Reality 二维码及其协议链接 |
+| `sudo mini-singboxctl qr hy2` | Hysteria2 二维码及其协议链接 |
+| `sudo mini-singboxctl qr anytls` | AnyTLS 二维码及其协议链接 |
+| `sudo mini-singboxctl qr all` | 依次显示全部启用协议二维码和链接 |
+| `sudo mini-singboxctl logs 100` | 最近 100 行服务状态和日志 |
+| `sudo mini-singboxctl version` | 二进制版本和构建身份 |
+
+二维码及其下方链接包含完整客户端凭据，不要截图或复制到公开聊天、Issue 或日志。
+
+直接控制 systemd：
+
+```sh
+sudo systemctl status mini-singbox --no-pager
+sudo systemctl restart mini-singbox
+sudo journalctl -u mini-singbox -n 100 --no-pager
+sudo journalctl -u mini-singbox -f
+```
+
+OpenRC：
+
+```sh
+sudo rc-service mini-singbox status
+sudo rc-service mini-singbox restart
+```
+
+## 配置、二维码与备份
+
+| 路径 | 权限 | 内容 |
+|---|---:|---|
+| `/etc/mini-singbox/config.json` | `0600` | 严格服务端配置 |
+| `/etc/mini-singbox/client-info.json` | `0600` | 客户端信息和分享 URI |
+| `/etc/mini-singbox/deployment-info.txt` | `0600` | 非凭据部署摘要 |
+| `/etc/mini-singbox/reality.key` | `0600` | Reality 私钥 |
+| `/etc/mini-singbox/tls.key` | `0600` | TLS 私钥 |
+| `/etc/mini-singbox/tls.crt` | `0644` | 365 天自签名证书 |
+| `/etc/mini-singbox/share-*.txt` | `0600` | 各协议分享链接 |
+| `/etc/mini-singbox/share-*.png` | `0600` | 各协议二维码 |
+| `/var/backups/mini-singbox/` | `0700` | 部署前回滚备份 |
+
+## 资源边界
+
+默认 systemd 服务设置：
+
+```text
+GOMAXPROCS=1
+GOMEMLIMIT=48MiB
+GOGC=70
+MemoryMax=128M
+TasksMax=64
+```
+
+`GOMEMLIMIT` 主要约束 Go Runtime 管理的内存，不是容器总内存硬限制，也不包含全部
+内核 Socket 内存。
+
+2026-08-09 的 1 vCPU/128 MiB 共享 NAT 实机测试中，三协议同时运行时观测到：
+
+- 收/发吞吐峰值约 `57.20/72.17 Mbps`；
+- 服务 CPU 峰值 `18%`，流量期间内存峰值 `41.4 MiB`；
+- 系统最低可用内存 `69.6 MiB`，Swap 使用 `0`；
+- TCP 重传率约 `0.061%`；
+- UDP/IP/网卡错误、丢包、服务重启、警告和 OOM 均为 `0`。
+
+以上是该参考环境的实测值，不是对所有线路和宿主机的性能保证。验证摘要见
+[正式版验证记录](docs/validation.md)。
+
+## Docker Compose
+
+```sh
+git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+cd mini-singbox
+mkdir config
+sudo chown 65532:65532 config
+sudo chmod 0700 config
+
+REALITY_SERVER_NAME=www.example.com \
+REALITY_HANDSHAKE=www.example.com:443 \
+TLS_SAN=proxy.example.com \
+PUBLIC_ADDRESS=proxy.example.com \
+docker compose --profile tools run --rm generate
+
+docker compose run --rm --no-deps mini-singbox check -c /etc/mini-singbox/config.json
+docker compose up -d mini-singbox
+```
+
+镜像使用 scratch、UID/GID `65532:65532`、只读根文件系统、空 capability、
+`no-new-privileges`、64 PID 上限和 128 MiB 内存上限。生成容器禁用网络。
+
+## 直接使用二进制
+
+```text
+mini-singbox run -c CONFIG
+mini-singbox check -c CONFIG
+mini-singbox generate [OPTIONS]
+mini-singbox deliver [OPTIONS]
+mini-singbox version
+```
+
+`deliver` 只从现有配置重建公网地址、端口、分享链接和二维码，不轮换服务端凭据。
+
+## 从源码验证
+
+构建不是小虚拟机部署流程的一部分。开发环境使用 Go `1.26.5`：
+
+```sh
+go mod verify
+go vet -tags with_utls ./...
+go test -tags with_utls ./...
+go test -race -tags with_utls ./...
+CGO_ENABLED=0 go build -tags with_utls -trimpath -o mini-singbox ./cmd/mini-singbox
+```
+
+## Release 验证
+
+正式 Release 包含 amd64/arm64 静态二进制、`SHA256SUMS`、minisign 签名、SPDX
+SBOM、GitHub provenance、许可证、文档和安装文件。手工验证：
+
+```sh
+minisign -Vm SHA256SUMS -x SHA256SUMS.minisig -p release/minisign.pub
+sha256sum -c SHA256SUMS --ignore-missing
+go version -m mini-singbox-linux-amd64
+```
+
+详见[可复现发布流程](docs/release.md)。
+
+## 卸载
+
+保留配置和密钥：
+
+```sh
+sudo ./scripts/uninstall.sh
+```
+
+永久删除配置和凭据：
+
+```sh
+sudo env PURGE=1 ./scripts/uninstall.sh
+```
+
+`PURGE=1` 不可由卸载脚本恢复；如仍需旧客户端，应先备份 `/etc/mini-singbox`。
+
+## 安全边界与许可
+
+安全报告方式见 [SECURITY.md](SECURITY.md)。项目采用 GPL-3.0-or-later，并链接官方
+sing-box；上游说明见 [NOTICE](NOTICE)。项目与 SagerNet 没有官方隶属或背书关系。

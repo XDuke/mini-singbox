@@ -1,0 +1,309 @@
+#!/bin/sh
+set -eu
+
+BINARY="${MINI_SINGBOX_BINARY:-/usr/local/bin/mini-singbox}"
+CONFIG_DIR="${MINI_SINGBOX_CONFIG_DIR:-/etc/mini-singbox}"
+CONFIG_PATH="$CONFIG_DIR/config.json"
+CLIENT_INFO_PATH="$CONFIG_DIR/client-info.json"
+SERVICE="${MINI_SINGBOX_SERVICE:-mini-singbox.service}"
+SERVICE_USER="${MINI_SINGBOX_SERVICE_USER:-mini-singbox}"
+SYSTEMCTL="${MINI_SINGBOX_SYSTEMCTL:-systemctl}"
+RC_SERVICE="${MINI_SINGBOX_RC_SERVICE:-rc-service}"
+QRENCODE="${MINI_SINGBOX_QRENCODE:-qrencode}"
+OPENSSL="${MINI_SINGBOX_OPENSSL:-openssl}"
+JQ="${MINI_SINGBOX_JQ:-jq}"
+SS="${MINI_SINGBOX_SS:-ss}"
+
+fail() {
+	printf 'mini-singboxctl: %s\n' "$*" >&2
+	exit 1
+}
+
+usage() {
+	cat <<'EOF'
+usage: mini-singboxctl <status|check|certificate|qr|logs|version> [options]
+
+commands:
+  status                   validate config, service, listeners, memory, and TLS expiry
+  check                    validate the installed configuration
+  certificate              show TLS certificate expiry and fail inside 30 days
+  qr [reality|hy2|anytls|all]
+                           render sensitive protocol QR codes and sharing links
+  logs [LINES]             show 1-1000 recent service log lines (default 100)
+  version                  show the installed binary build identity
+EOF
+}
+
+command_available() {
+	case "$1" in
+		*/*) [ -x "$1" ] ;;
+		*) command -v "$1" >/dev/null 2>&1 ;;
+	esac
+}
+
+require_command() {
+	command_available "$1" || fail "required command not found: $1"
+}
+
+require_installation() {
+	[ -x "$BINARY" ] || fail "binary is not executable: $BINARY"
+	if [ ! -f "$CONFIG_PATH" ] || [ -L "$CONFIG_PATH" ]; then
+		fail "configuration is missing or unsafe: $CONFIG_PATH"
+	fi
+}
+
+run_check() {
+	if [ "$(id -u)" -eq 0 ] && command -v runuser >/dev/null 2>&1 && id "$SERVICE_USER" >/dev/null 2>&1; then
+		runuser -u "$SERVICE_USER" -- "$BINARY" check -c "$CONFIG_PATH"
+	else
+		"$BINARY" check -c "$CONFIG_PATH"
+	fi
+}
+
+detect_init() {
+	if [ "${MINI_SINGBOX_INIT_SYSTEM:-auto}" != "auto" ]; then
+		printf '%s\n' "$MINI_SINGBOX_INIT_SYSTEM"
+	elif command_available "$SYSTEMCTL" && [ -d /run/systemd/system ]; then
+		printf 'systemd\n'
+	elif command_available "$RC_SERVICE"; then
+		printf 'openrc\n'
+	else
+		printf 'unknown\n'
+	fi
+}
+
+service_is_active() {
+	case "$1" in
+		systemd) "$SYSTEMCTL" is-active --quiet "$SERVICE" ;;
+		openrc) "$RC_SERVICE" "${SERVICE%.service}" status 2>/dev/null | grep -q 'started' ;;
+		*) return 1 ;;
+	esac
+}
+
+certificate_paths() {
+	require_command "$JQ"
+	"$JQ" -er '
+		[.hysteria2.certificate_path, .anytls.certificate_path]
+		| map(select(. != null and . != ""))
+		| unique
+		| if length == 0 then error("no TLS certificate") else .[] end
+	' "$CONFIG_PATH" 2>/dev/null
+}
+
+show_certificate() {
+	require_installation
+	require_command "$OPENSSL"
+	require_command "$JQ"
+	"$JQ" -e 'type == "object"' "$CONFIG_PATH" >/dev/null 2>&1 || \
+		fail "cannot read configuration JSON: $CONFIG_PATH"
+	configured_certificates="$(certificate_paths)" || {
+		printf 'TLS certificate: not used by the enabled protocols\n'
+		return 0
+	}
+	printf '%s\n' "$configured_certificates" | while IFS= read -r configured; do
+		case "$configured" in
+			/*) certificate="$configured" ;;
+			*) certificate="$CONFIG_DIR/$configured" ;;
+		esac
+		if [ ! -f "$certificate" ] || [ -L "$certificate" ]; then
+			fail "TLS certificate is missing or unsafe: $certificate"
+		fi
+		expires="$($OPENSSL x509 -in "$certificate" -noout -enddate 2>/dev/null)" || \
+			fail "cannot inspect TLS certificate: $certificate"
+		if "$OPENSSL" x509 -in "$certificate" -noout -checkend 2592000 >/dev/null 2>&1; then
+			printf 'TLS certificate: valid beyond 30 days (%s)\n' "${expires#notAfter=}"
+		else
+			printf 'TLS certificate: expires within 30 days (%s)\n' "${expires#notAfter=}" >&2
+			exit 1
+		fi
+	done
+}
+
+socket_is_listening() {
+	transport="$1"
+	port="$2"
+	require_command "$SS"
+	case "$transport" in
+		tcp) socket_output="$($SS -lntH)" ;;
+		udp) socket_output="$($SS -lnuH)" ;;
+		*) return 1 ;;
+	esac
+	printf '%s\n' "$socket_output" | awk -v port="$port" '
+		$4 ~ (":" port "$") { found = 1 }
+		END { exit !found }
+	'
+}
+
+show_protocol() {
+	key="$1"
+	label="$2"
+	transport="$3"
+	active="$4"
+	port="$($JQ -er ".${key}.port // empty" "$CONFIG_PATH" 2>/dev/null || true)"
+	[ -n "$port" ] || return 0
+	listener="not listening"
+	if [ "$active" -eq 1 ] && socket_is_listening "$transport" "$port"; then
+		listener="listening"
+	else
+		STATUS_FAILURE=1
+	fi
+	printf '%-12s %s/%s, %s\n' "$label:" "$transport" "$port" "$listener"
+	public_port="$($JQ -er ".${key}.port // empty" "$CLIENT_INFO_PATH" 2>/dev/null || true)"
+	if [ -n "$public_port" ]; then
+		printf '%-12s %s/%s\n' "$label public:" "$transport" "$public_port"
+	fi
+}
+
+show_status() {
+	require_installation
+	require_command "$JQ"
+	STATUS_FAILURE=0
+	version_output="$("$BINARY" version)" || fail "cannot read the installed binary version"
+	version_line="$(printf '%s\n' "$version_output" | sed -n '1p')"
+	printf 'version:      %s\n' "$version_line"
+	if run_check >/dev/null 2>&1; then
+		printf 'configuration: valid\n'
+	else
+		printf 'configuration: invalid\n' >&2
+		STATUS_FAILURE=1
+	fi
+
+	init_system="$(detect_init)"
+	active=0
+	if service_is_active "$init_system"; then
+		active=1
+		printf 'service:      active (%s)\n' "$init_system"
+	else
+		printf 'service:      inactive or unavailable (%s)\n' "$init_system" >&2
+		STATUS_FAILURE=1
+	fi
+	if [ "$init_system" = "systemd" ] && [ "$active" -eq 1 ]; then
+		pid="$($SYSTEMCTL show "$SERVICE" -p MainPID --value)"
+		memory="$($SYSTEMCTL show "$SERVICE" -p MemoryCurrent --value)"
+		tasks="$($SYSTEMCTL show "$SERVICE" -p TasksCurrent --value)"
+		memory_mib="$(awk -v bytes="$memory" 'BEGIN { if (bytes ~ /^[0-9]+$/) printf "%.1f", bytes / 1048576; else print "unknown" }')"
+		printf 'process:      PID %s, memory %s MiB, tasks %s\n' "$pid" "$memory_mib" "$tasks"
+	fi
+
+	public_address="$($JQ -r '.public_address // "not recorded"' "$CLIENT_INFO_PATH" 2>/dev/null || printf 'not recorded')"
+	printf 'public address: %s\n' "$public_address"
+	show_protocol vless_reality Reality tcp "$active"
+	show_protocol hysteria2 Hysteria2 udp "$active"
+	show_protocol anytls AnyTLS tcp "$active"
+	if ! show_certificate; then
+		STATUS_FAILURE=1
+	fi
+	return "$STATUS_FAILURE"
+}
+
+show_qr() {
+	protocol="${1:-all}"
+	case "$protocol" in
+		reality|hy2|anytls|all) ;;
+		*) fail "qr protocol must be reality, hy2, anytls, or all" ;;
+	esac
+	require_installation
+	require_command "$JQ"
+	require_command "$QRENCODE"
+	printf 'WARNING: QR codes and sharing links contain client credentials; do not share terminal output.\n' >&2
+	found=0
+	for mapping in \
+		reality:vless_reality:share-reality \
+		hy2:hysteria2:share-hysteria2 \
+		anytls:anytls:share-anytls; do
+		name="${mapping%%:*}"
+		remainder="${mapping#*:}"
+		config_key="${remainder%%:*}"
+		file="${remainder#*:}"
+		if [ "$protocol" != "all" ] && [ "$protocol" != "$name" ]; then
+			continue
+		fi
+		if ! "$JQ" -e ".${config_key} != null" "$CONFIG_PATH" >/dev/null 2>&1; then
+			if [ "$protocol" = "$name" ]; then
+				fail "$name is not enabled in $CONFIG_PATH"
+			fi
+			continue
+		fi
+		path="$CONFIG_DIR/$file.txt"
+		if [ -f "$path" ] && [ ! -L "$path" ]; then
+			share_link=''
+			{
+				IFS= read -r share_link || fail "share link must be one newline-terminated line: $path"
+				if IFS= read -r _; then
+					fail "share link must contain exactly one line: $path"
+				fi
+			} < "$path"
+			[ -n "$share_link" ] || fail "share link is empty: $path"
+			if printf '%s' "$share_link" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+				fail "share link contains control characters: $path"
+			fi
+			case "$name:$share_link" in
+				reality:vless://*|hy2:hysteria2://*|anytls:anytls://*) ;;
+				*) fail "share link scheme does not match enabled protocol $name: $path" ;;
+			esac
+			printf '\n%s\n' "$name"
+			printf '%s\n' "$share_link" | "$QRENCODE" -t ANSIUTF8
+			printf 'link (sensitive): %s\n' "$share_link"
+			found=1
+		else
+			fail "share link is missing or unsafe: $path"
+		fi
+	done
+	[ "$found" -eq 1 ] || fail "no protocol share links were found in $CONFIG_DIR"
+}
+
+show_logs() {
+	lines="${1:-100}"
+	case "$lines" in
+		''|*[!0-9]*) fail "log line count must be an integer from 1 to 1000" ;;
+	esac
+	if [ "$lines" -lt 1 ] || [ "$lines" -gt 1000 ]; then
+		fail "log line count must be an integer from 1 to 1000"
+	fi
+	case "$(detect_init)" in
+		systemd) exec "$SYSTEMCTL" status "$SERVICE" --no-pager --lines "$lines" ;;
+		openrc)
+			command -v logread >/dev/null 2>&1 || fail "logread is unavailable on this OpenRC system"
+			logread | grep 'mini-singbox' | tail -n "$lines"
+			;;
+		*) fail "cannot detect systemd or OpenRC" ;;
+	esac
+}
+
+command="${1:-}"
+case "$command" in
+	status)
+		[ "$#" -eq 1 ] || fail "status does not accept arguments"
+		show_status
+		;;
+	check)
+		[ "$#" -eq 1 ] || fail "check does not accept arguments"
+		require_installation
+		run_check
+		;;
+	certificate)
+		[ "$#" -eq 1 ] || fail "certificate does not accept arguments"
+		show_certificate
+		;;
+	qr)
+		[ "$#" -le 2 ] || fail "qr accepts at most one protocol"
+		show_qr "${2:-all}"
+		;;
+	logs)
+		[ "$#" -le 2 ] || fail "logs accepts at most one line count"
+		show_logs "${2:-100}"
+		;;
+	version)
+		[ "$#" -eq 1 ] || fail "version does not accept arguments"
+		[ -x "$BINARY" ] || fail "binary is not executable: $BINARY"
+		exec "$BINARY" version
+		;;
+	-h|--help|help)
+		[ "$#" -eq 1 ] || fail "help does not accept arguments"
+		usage
+		;;
+	*)
+		usage >&2
+		exit 2
+		;;
+esac

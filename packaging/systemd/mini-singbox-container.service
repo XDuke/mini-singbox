@@ -1,0 +1,29 @@
+[Unit]
+Description=mini-singbox single-user proxy (container-compatible)
+After=network.target
+
+[Service]
+Type=simple
+User=mini-singbox
+Group=mini-singbox
+WorkingDirectory=/etc/mini-singbox
+ExecStart=/usr/local/bin/mini-singbox run -c /etc/mini-singbox/config.json
+Environment=GOMAXPROCS=1
+Environment=GOMEMLIMIT=48MiB
+Environment=GOGC=70
+EnvironmentFile=-/etc/default/mini-singbox
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=10s
+UMask=0077
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+# systemd seccomp and mount-namespace directives require CAP_SYS_ADMIN during
+# the User= transition in restricted Podman/LXC environments. The container
+# runtime provides that outer boundary; this unit retains process-level guards.
+MemoryMax=128M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

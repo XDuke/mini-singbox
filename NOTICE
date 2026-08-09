@@ -1,0 +1,14 @@
+mini-singbox
+Copyright (C) 2026 mini-singbox contributors
+
+This program links the official sing-box module:
+
+  github.com/sagernet/sing-box v1.13.16
+  Copyright (C) 2022 by nekohasekai <contact-sagernet@sekai.icu>
+  https://github.com/SagerNet/sing-box
+
+Both mini-singbox and sing-box are distributed under the GNU General Public
+License, version 3 or later. See LICENSE for the complete license notice.
+
+mini-singbox is an independent project. It is not affiliated with, endorsed
+by, or an official distribution of SagerNet or sing-box.

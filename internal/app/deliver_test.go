@@ -1,0 +1,98 @@
+package app
+
+import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestDeliverRebuildsSharesWithoutRotatingCredentials(t *testing.T) {
+	serverDirectory := filepath.Join(t.TempDir(), "server")
+	generated, err := Generate(GenerateOptions{
+		Output: serverDirectory, Protocols: []string{"reality", "hy2", "anytls"},
+		Listen: "127.0.0.1", PublicAddress: "192.0.2.1",
+		RealityPort: 20001, Hysteria2Port: 20002, AnyTLSPort: 20003,
+		RealityServerName: "www.example.com", RealityHandshake: "www.example.com:443",
+		TLSSAN: "server.example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(serverDirectory, "config.json")
+	configBefore, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveryDirectory := filepath.Join(t.TempDir(), "delivery")
+	delivered, err := Deliver(DeliverOptions{
+		ConfigPath: configPath, Output: deliveryDirectory, PublicAddress: "203.0.113.10",
+		RealityPort: 51165, Hysteria2Port: 25421, AnyTLSPort: 36279,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(delivered.Files) != 4 {
+		t.Fatalf("delivery files = %v", delivered.Files)
+	}
+	configAfter, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(configBefore, configAfter) {
+		t.Fatal("Deliver() changed the server configuration")
+	}
+	var original, updated clientInfo
+	if err := json.Unmarshal(generated.ClientInfo, &original); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(delivered.ClientInfo, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if original.VLESSReality.UUID != updated.VLESSReality.UUID ||
+		original.VLESSReality.PublicKey != updated.VLESSReality.PublicKey ||
+		original.Hysteria2.Password != updated.Hysteria2.Password ||
+		original.AnyTLS.Password != updated.AnyTLS.Password {
+		t.Fatal("Deliver() rotated an existing credential")
+	}
+	if updated.PublicAddress != "203.0.113.10" {
+		t.Fatalf("public address = %q", updated.PublicAddress)
+	}
+	assertShareURI(t, updated.VLESSReality.ShareURI, "vless", updated.PublicAddress, 51165)
+	assertShareURI(t, updated.Hysteria2.ShareURI, "hysteria2", updated.PublicAddress, 25421)
+	assertShareURI(t, updated.AnyTLS.ShareURI, "anytls", updated.PublicAddress, 36279)
+	for _, name := range []string{"config.json", "reality.key", "tls.key", "tls.crt"} {
+		if _, err := os.Stat(filepath.Join(deliveryDirectory, name)); !os.IsNotExist(err) {
+			t.Fatalf("delivery unexpectedly contains server file %s", name)
+		}
+	}
+	if _, err := Deliver(DeliverOptions{
+		ConfigPath: configPath, Output: deliveryDirectory, PublicAddress: "203.0.113.10",
+		RealityPort: 51165, Hysteria2Port: 25421, AnyTLSPort: 36279,
+	}); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("second Deliver() error = %v", err)
+	}
+}
+
+func TestDeliverRejectsConflictingPublicTCPPorts(t *testing.T) {
+	serverDirectory := filepath.Join(t.TempDir(), "server")
+	_, err := Generate(GenerateOptions{
+		Output: serverDirectory, Protocols: []string{"reality", "anytls"}, Listen: "127.0.0.1",
+		RealityPort: 20001, AnyTLSPort: 20003,
+		RealityServerName: "www.example.com", RealityHandshake: "www.example.com:443",
+		TLSSAN: "server.example",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Deliver(DeliverOptions{
+		ConfigPath: filepath.Join(serverDirectory, "config.json"),
+		Output:     filepath.Join(t.TempDir(), "delivery"), PublicAddress: "203.0.113.10",
+		RealityPort: 443, AnyTLSPort: 443,
+	})
+	if err == nil || !strings.Contains(err.Error(), "conflicts") {
+		t.Fatalf("Deliver() error = %v", err)
+	}
+}

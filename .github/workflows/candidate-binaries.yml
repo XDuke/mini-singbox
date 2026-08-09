@@ -1,0 +1,87 @@
+name: candidate-binaries
+
+on:
+  workflow_run:
+    workflows: ["ci"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    env:
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+    steps:
+      - name: Download the binaries that passed CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir dist
+          gh run download "$RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name security-audit-inputs \
+            --dir dist
+      - name: Validate immutable binary identity
+        run: |
+          set -eu
+          short_commit="$(printf '%s' "$HEAD_SHA" | cut -c1-12)"
+          expected_version="candidate-$short_commit"
+          chmod 0755 dist/mini-singbox-linux-amd64 dist/mini-singbox-linux-arm64
+          file dist/mini-singbox-linux-amd64 | grep -q 'statically linked'
+          file dist/mini-singbox-linux-arm64 | grep -q 'statically linked'
+          file dist/mini-singbox-linux-amd64 | grep -q 'x86-64'
+          file dist/mini-singbox-linux-arm64 | grep -q 'ARM aarch64'
+          grep -Fx "source_commit=$HEAD_SHA" dist/candidate-binary-identity.txt
+          grep -Fx "version=$expected_version" dist/candidate-binary-identity.txt
+          amd64_sha256="$(sha256sum dist/mini-singbox-linux-amd64 | awk '{ print $1 }')"
+          arm64_sha256="$(sha256sum dist/mini-singbox-linux-arm64 | awk '{ print $1 }')"
+          grep -Fx "amd64_sha256=$amd64_sha256" dist/candidate-binary-identity.txt
+          grep -Fx "arm64_sha256=$arm64_sha256" dist/candidate-binary-identity.txt
+      - name: Attest Candidate binaries
+        id: provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+      - name: Assemble checksum manifest
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE_PATH" dist/provenance.intoto.jsonl
+          (cd dist && sha256sum \
+            mini-singbox-linux-amd64 \
+            mini-singbox-linux-arm64 \
+            candidate-binary-identity.txt \
+            provenance.intoto.jsonl) > dist/SHA256SUMS
+      - name: Publish commit-specific prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short_commit="$(printf '%s' "$HEAD_SHA" | cut -c1-12)"
+          release_tag="candidate-$short_commit"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $release_tag already exists; refusing to replace immutable assets"
+            exit 0
+          fi
+          gh release create "$release_tag" \
+            dist/mini-singbox-linux-amd64 \
+            dist/mini-singbox-linux-arm64 \
+            dist/SHA256SUMS \
+            dist/candidate-binary-identity.txt \
+            dist/provenance.intoto.jsonl \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$HEAD_SHA" \
+            --prerelease \
+            --title "mini-singbox candidate $short_commit" \
+            --notes "Commit-specific CI candidate for low-memory validation. This is not a stable signed release."

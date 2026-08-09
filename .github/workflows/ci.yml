@@ -1,0 +1,182 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.5
+          cache: true
+      - run: test "$(go env GOVERSION)" = go1.26.5
+      - name: Formatting
+        run: test -z "$(gofmt -l .)"
+      - run: go mod verify
+      - run: go vet -tags with_utls ./...
+      - run: go test -tags with_utls ./...
+      - run: go test -race -tags with_utls ./...
+      - run: go test -tags fuzz -run '^$' -fuzz=FuzzDecode -fuzztime=5s ./internal/config
+      - name: Vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          set +e
+          "$(go env GOPATH)/bin/govulncheck" -tags with_utls ./... 2>&1 | tee govulncheck.txt
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "GOVULNCHECK_STATUS=$status" >> "$GITHUB_ENV"
+      - name: Static linux builds
+        run: |
+          version="candidate-${GITHUB_SHA:0:12}"
+          build_time="$(git show -s --format=%cI HEAD)"
+          ldflags="-s -w -buildid= -X github.com/XDuke/mini-singbox/internal/version.Version=$version -X github.com/XDuke/mini-singbox/internal/version.Commit=$GITHUB_SHA -X github.com/XDuke/mini-singbox/internal/version.BuildTime=$build_time -X github.com/XDuke/mini-singbox/internal/version.Dirty=false"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o mini-singbox-linux-amd64 ./cmd/mini-singbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o mini-singbox-linux-arm64 ./cmd/mini-singbox
+          file mini-singbox-linux-amd64 | grep -q 'statically linked'
+          file mini-singbox-linux-arm64 | grep -q 'statically linked'
+          ./mini-singbox-linux-amd64 version | grep -Fx "mini-singbox $version"
+          ./mini-singbox-linux-amd64 version | grep -Fx "git_commit $GITHUB_SHA"
+          go version -m mini-singbox-linux-amd64
+          go version -m mini-singbox-linux-arm64
+          {
+            printf 'source_commit=%s\n' "$GITHUB_SHA"
+            printf 'version=%s\n' "$version"
+            printf 'amd64_sha256=%s\n' "$(sha256sum mini-singbox-linux-amd64 | awk '{ print $1 }')"
+            printf 'arm64_sha256=%s\n' "$(sha256sum mini-singbox-linux-arm64 | awk '{ print $1 }')"
+          } > candidate-binary-identity.txt
+      - name: Unprivileged deployer binary traversal
+        run: |
+          test_directory="$(mktemp -d)"
+          trap 'rm -rf "$test_directory"' EXIT
+          chmod 0711 "$test_directory"
+          install -m 0755 mini-singbox-linux-amd64 "$test_directory/mini-singbox"
+          sudo -u nobody -- "$test_directory/mini-singbox" version | grep -Fx "git_commit $GITHUB_SHA"
+      - name: On-demand control tool and IPv6 delivery
+        run: tests/control-tool.sh scripts/mini-singboxctl ./mini-singbox-linux-amd64
+      - name: Compiled dependency audit
+        run: |
+          GOOS=linux GOARCH=amd64 go list -tags with_utls -deps ./cmd/mini-singbox | sort -u > compiled-deps-linux-amd64.txt
+          if grep -E 'github.com/sagernet/gvisor|sing-box/protocol/tun|sing-box/transport/wireguard|sing-box/endpoint/wireguard' compiled-deps-linux-amd64.txt; then
+            exit 1
+          fi
+          grep -E '^github.com/sagernet/(sing-tun|nftables)(/|$)' compiled-deps-linux-amd64.txt > upstream-compiled-network-utilities.txt || true
+      - name: Binary forbidden-string scan
+        run: |
+          if strings mini-singbox-linux-amd64 | grep -E 'panel-token|panel-url|users\.json|/stats|/health'; then
+            exit 1
+          fi
+      - name: Source forbidden-implementation scan
+        run: |
+          if grep -RniE 'Xboard|panelapi|UserManager|TrafficCounter|Snapshot|serveStats|ServeSubscription|SubscriptionOptions|serve-subscription|subscription-port|/stats|/health|panel-token|panel-url|users\.json' cmd internal packaging; then
+            exit 1
+          fi
+      - name: Project identity and stale-name guard
+        run: |
+          test "$(head -n 1 go.mod)" = 'module github.com/XDuke/mini-singbox'
+          test -z "$(git grep -nI -e 'mini-sb-local' -e 'mini-sb-agent' -e 'ashvvvvv' -e 'MINI_SB_' -- . ':(exclude).github/workflows/ci.yml' ':(exclude).github/workflows/release.yml' || true)"
+      - name: Shell syntax
+        run: sh -n scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl packaging/openrc/mini-singbox tests/no-egress.sh tests/cgroup-observe.sh tests/restart-cycle.sh tests/control-tool.sh
+      - name: Shell static analysis
+        run: shellcheck --shell sh scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh
+      - name: On-demand control-plane guardrails
+        run: |
+          test -z "$(grep -nE 'curl|wget|https?://' scripts/mini-singboxctl || true)"
+          test -z "$(grep -RniF 'mini-singboxctl' packaging || true)"
+          grep -Fq 'qr [reality|hy2|anytls|all]' scripts/mini-singboxctl
+      - name: Systemd profile guardrails
+        run: |
+          grep -Fx 'PrivateTmp=true' packaging/systemd/mini-singbox.service
+          grep -Fx 'ProtectSystem=strict' packaging/systemd/mini-singbox.service
+          test -z "$(grep -E '^(Private|Protect|RestrictAddressFamilies|LockPersonality|MemoryDenyWriteExecute|RestrictRealtime|RestrictSUIDSGID|SystemCallArchitectures)' packaging/systemd/mini-singbox-container.service || true)"
+          for setting in \
+            'User=mini-singbox' \
+            'Group=mini-singbox' \
+            'NoNewPrivileges=true' \
+            'CapabilityBoundingSet=' \
+            'AmbientCapabilities=' \
+            'MemoryMax=128M' \
+            'TasksMax=64'; do
+            grep -Fx "$setting" packaging/systemd/mini-singbox-container.service
+          done
+      - name: Compose syntax
+        env:
+          REALITY_SERVER_NAME: www.example.com
+          REALITY_HANDSHAKE: www.example.com:443
+          TLS_SAN: proxy.example.com
+        run: docker compose config --quiet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-audit-inputs
+          path: |
+            compiled-deps-linux-amd64.txt
+            upstream-compiled-network-utilities.txt
+            govulncheck.txt
+            mini-singbox-linux-amd64
+            mini-singbox-linux-arm64
+            candidate-binary-identity.txt
+      - name: Enforce release security gates
+        run: |
+          test "$GOVULNCHECK_STATUS" = 0
+
+  container:
+    runs-on: ubuntu-24.04
+    needs: test
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build image
+        run: docker build --build-arg VERSION=ci --build-arg COMMIT=${GITHUB_SHA} --build-arg DIRTY=false -t mini-singbox:ci .
+      - name: Image metadata
+        run: |
+          test "$(docker image inspect mini-singbox:ci --format '{{.Config.User}}')" = '65532:65532'
+          test "$(docker image inspect mini-singbox:ci --format '{{json .Config.Entrypoint}}')" = '["/mini-singbox"]'
+      - name: Hardened version command
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m \
+            mini-singbox:ci version
+          if docker run --rm --entrypoint /bin/sh mini-singbox:ci -c true; then
+            echo 'scratch image unexpectedly contains a shell' >&2
+            exit 1
+          fi
+      - name: Network-disabled generation and check
+        run: |
+          mkdir generated
+          sudo chown 65532:65532 generated
+          sudo chmod 0700 generated
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m \
+            -v "$PWD/generated:/output" mini-singbox:ci generate \
+            --output /output --protocols reality,hy2,anytls --listen 127.0.0.1 \
+            --public-address 203.0.113.10 \
+            --reality-server-name www.example.com \
+            --reality-handshake www.example.com:443 --tls-san proxy.example.com
+          test "$(sudo stat -c '%a' generated/config.json)" = 600
+          test "$(sudo stat -c '%a' generated/reality.key)" = 600
+          test "$(sudo stat -c '%a' generated/tls.key)" = 600
+          test "$(sudo stat -c '%a' generated/tls.crt)" = 644
+          test "$(sudo stat -c '%a' generated/share-reality.txt)" = 600
+          test "$(sudo stat -c '%a' generated/share-hysteria2.txt)" = 600
+          test "$(sudo stat -c '%a' generated/share-anytls.txt)" = 600
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m \
+            -v "$PWD/generated:/etc/mini-singbox:ro" mini-singbox:ci \
+            check -c /etc/mini-singbox/config.json
+      - name: Unprivileged idle start and stop
+        run: |
+          container_id=$(docker run -d --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m \
+            -e GOMAXPROCS=1 -e GOMEMLIMIT=48MiB -e GOGC=70 \
+            -v "$PWD/generated:/etc/mini-singbox:ro" mini-singbox:ci)
+          sleep 5
+          test "$(docker inspect "$container_id" --format '{{.State.Running}}')" = true
+          docker stop --time 10 "$container_id"
+          test "$(docker inspect "$container_id" --format '{{.State.ExitCode}}')" = 0
+          docker rm "$container_id"

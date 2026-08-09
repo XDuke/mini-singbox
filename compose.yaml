@@ -1,0 +1,58 @@
+name: mini-singbox
+
+services:
+  mini-singbox:
+    image: ghcr.io/xduke/mini-singbox:${MINI_SINGBOX_VERSION:-v1.0.0}
+    build:
+      context: .
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 128m
+    restart: unless-stopped
+    stop_grace_period: 10s
+    environment:
+      GOMAXPROCS: ${GOMAXPROCS:-1}
+      GOMEMLIMIT: ${GOMEMLIMIT:-48MiB}
+      GOGC: ${GOGC:-70}
+    volumes:
+      - ./config:/etc/mini-singbox:ro
+    ports:
+      - "${REALITY_PORT:-20001}:20001/tcp"
+      - "${HY2_PORT:-20002}:20002/udp"
+      - "${ANYTLS_PORT:-20003}:20003/tcp"
+
+  generate:
+    profiles: ["tools"]
+    image: ghcr.io/xduke/mini-singbox:${MINI_SINGBOX_VERSION:-v1.0.0}
+    build:
+      context: .
+    user: "65532:65532"
+    read_only: true
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./config:/output
+    command:
+      - generate
+      - --output
+      - /output
+      - --protocols
+      - ${PROTOCOLS:-reality,hy2,anytls}
+      - --listen
+      - ${LISTEN_ADDRESS:-::}
+      - --public-address
+      - ${PUBLIC_ADDRESS:-}
+      - --reality-server-name
+      - ${REALITY_SERVER_NAME:?set REALITY_SERVER_NAME}
+      - --reality-handshake
+      - ${REALITY_HANDSHAKE:?set REALITY_HANDSHAKE}
+      - --tls-san
+      - ${TLS_SAN:?set TLS_SAN}
