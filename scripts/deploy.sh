@@ -651,6 +651,30 @@ if [ "$SIGNED_RELEASE" -eq 1 ]; then
 		fail "release checksum signature verification failed"
 fi
 
+verify_signed_checkout_file() {
+	local_file="$1"
+	manifest_name="$2"
+	[ -f "$local_file" ] && [ ! -L "$local_file" ] || \
+		fail "release checkout file is missing or unsafe: $manifest_name"
+	expected="$(awk -v asset="$manifest_name" '$2 == asset || $2 == "*" asset { print $1 }' "$CHECKSUMS")"
+	printf '%s\n' "$expected" | grep -Eq '^[0-9a-f]{64}$' || \
+		fail "signed checksum manifest does not contain one valid SHA-256 for $manifest_name"
+	actual="$(sha256sum "$local_file" | awk '{ print $1 }')"
+	[ "$actual" = "$expected" ] || fail "signed checkout verification failed for $manifest_name"
+}
+
+if [ "$SIGNED_RELEASE" -eq 1 ]; then
+	verify_signed_checkout_file "$SOURCE_DIR/scripts/deploy.sh" scripts/deploy.sh
+	verify_signed_checkout_file "$CONTROL_SOURCE" scripts/mini-singboxctl
+	case "$UNIT_PROFILE" in
+		full) unit_manifest_name=packaging/systemd/mini-singbox.service ;;
+		container-compatible) unit_manifest_name=packaging/systemd/mini-singbox-container.service ;;
+		*) fail "internal systemd profile error: $UNIT_PROFILE" ;;
+	esac
+	verify_signed_checkout_file "$UNIT_SOURCE" "$unit_manifest_name"
+	verify_signed_checkout_file "$MINISIGN_PUBLIC_KEY" release/minisign.pub
+fi
+
 EXPECTED_SHA256="$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset { print $1 }' "$CHECKSUMS")"
 printf '%s\n' "$EXPECTED_SHA256" | grep -Eq '^[0-9a-f]{64}$' || \
 	fail "release checksum does not contain one valid SHA-256 for $ASSET"
