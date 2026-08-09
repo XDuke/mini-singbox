@@ -168,62 +168,12 @@ jobs:
           printf '%s\n' "$MINISIGN_PASSWORD" | minisign -Sm dist/SHA256SUMS -s "$RUNNER_TEMP/minisign.key" -x dist/SHA256SUMS.minisig
           unset MINISIGN_PASSWORD
           minisign -Vm dist/SHA256SUMS -x dist/SHA256SUMS.minisig -p release/minisign.pub >/dev/null
-      - name: Upload audit evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-audit-${{ env.RELEASE_TAG }}
-          path: |
-            dist/compiled-deps-linux-amd64.txt
-            dist/upstream-compiled-network-utilities.txt
-            dist/go-version-amd64.txt
-            dist/go-version-arm64.txt
-            dist/nm-amd64.txt
-      - name: Preserve signed release bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-bundle-${{ env.RELEASE_TAG }}
-          if-no-files-found: error
-          retention-days: 30
-          path: |
-            dist/mini-singbox-linux-amd64
-            dist/mini-singbox-linux-arm64
-            dist/SHA256SUMS
-            dist/SHA256SUMS.minisig
-            dist/SBOM.spdx.json
-            dist/provenance.intoto.jsonl
-            dist/go-version-amd64.txt
-            dist/go-version-arm64.txt
-            dist/compiled-deps-linux-amd64.txt
-            dist/upstream-compiled-network-utilities.txt
-            LICENSE
-            NOTICE
-            README.md
-            CHANGELOG.md
-            SECURITY.md
-            MIGRATION.md
-            docs/release.md
-            docs/nat-vps.md
-            docs/v1.0.0-readiness.md
-            docs/validation.md
-            examples/config.json
-            release/minisign.pub
-            scripts/deploy.sh
-            scripts/install.sh
-            scripts/uninstall.sh
-            scripts/mini-singboxctl
-            packaging/systemd/mini-singbox.service
-            packaging/systemd/mini-singbox-container.service
-            packaging/openrc/mini-singbox
-      - name: Publish GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_COMMIT: ${{ steps.tag.outputs.commit }}
+      - name: Stage flat GitHub Release assets
         run: |
           set -eu
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists; refusing to replace immutable assets" >&2
-            exit 1
-          fi
+          upload_dir="$RUNNER_TEMP/release-upload"
+          rm -rf -- "$upload_dir"
+          mkdir -p -- "$upload_dir"
           files=(
             dist/mini-singbox-linux-amd64
             dist/mini-singbox-linux-arm64
@@ -255,6 +205,60 @@ jobs:
             packaging/systemd/mini-singbox-container.service
             packaging/openrc/mini-singbox
           )
+          duplicate_names="$(printf '%s\n' "${files[@]}" | sed 's|.*/||' | sort | uniq -d)"
+          test -z "$duplicate_names"
+          for file in "${files[@]}"; do
+            cp -- "$file" "$upload_dir/${file##*/}"
+          done
+          test "$(find "$upload_dir" -maxdepth 1 -type f | wc -l)" -eq "${#files[@]}"
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-audit-${{ env.RELEASE_TAG }}
+          path: |
+            dist/compiled-deps-linux-amd64.txt
+            dist/upstream-compiled-network-utilities.txt
+            dist/go-version-amd64.txt
+            dist/go-version-arm64.txt
+            dist/nm-amd64.txt
+      - name: Preserve signed release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-bundle-${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+          retention-days: 30
+          path: ${{ runner.temp }}/release-upload/*
+      - name: Select GitHub Release publication mode
+        id: publication
+        env:
+          RELEASE_GITHUB_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+        run: |
+          set -eu
+          if [ -n "$RELEASE_GITHUB_TOKEN" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "::notice::Signed flat Release bundle preserved; automated publication is disabled because RELEASE_GITHUB_TOKEN is not configured."
+          {
+            echo "### Signed Release bundle ready"
+            echo
+            echo "The repository policy rejects formal publication by the default GitHub Actions token."
+            echo "Download \`release-bundle-$RELEASE_TAG\`, create a draft for the existing annotated tag,"
+            echo "upload every flat asset, verify the asset count, and publish the draft."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish GitHub Release
+        if: steps.publication.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_GITHUB_TOKEN }}
+          RELEASE_COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          set -eu
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace immutable assets" >&2
+            exit 1
+          fi
+          files=("$RUNNER_TEMP"/release-upload/*)
           args=(
             release create "$RELEASE_TAG"
             "${files[@]}"
@@ -262,7 +266,7 @@ jobs:
             --verify-tag
             --target "$RELEASE_COMMIT"
             --title "mini-singbox $RELEASE_TAG"
-            --notes-file CHANGELOG.md
+            --notes-file "$RUNNER_TEMP/release-upload/CHANGELOG.md"
           )
           if [[ "$RELEASE_TAG" == *-* ]]; then
             args+=(--prerelease)

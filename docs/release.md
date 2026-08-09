@@ -30,6 +30,12 @@ environment secrets `MINISIGN_PRIVATE_KEY` and `MINISIGN_PASSWORD`. Its public
 key is pinned at `release/minisign.pub`. Never commit the private key or reuse it
 for another project.
 
+Formal publication can additionally use the protected environment secret
+`RELEASE_GITHUB_TOKEN`. Use a dedicated fine-grained user token limited to this
+repository with Contents write access. The default Actions integration may be
+unable to publish a Release for a protected formal tag even when the workflow's
+`GITHUB_TOKEN` reports Contents write permission.
+
 ## Publication
 
 Create an annotated tag on the reviewed commit and push only that tag:
@@ -39,7 +45,9 @@ git tag -a v1.0.0 -m 'mini-singbox v1.0.0'
 git push origin v1.0.0
 ```
 
-The tag workflow reruns all gates and creates:
+Enable release immutability in the repository before publishing. GitHub applies
+that setting only to future releases. The tag workflow reruns all gates and
+creates:
 
 - `mini-singbox-linux-amd64`
 - `mini-singbox-linux-arm64`
@@ -48,6 +56,14 @@ The tag workflow reruns all gates and creates:
 - `provenance.intoto.jsonl`
 - Go build metadata and compiled-dependency audit evidence
 - source, license/notice, security, migration, deployment and service files
+
+The workflow always preserves these 29 files as a flat signed Actions artifact
+named `release-bundle-<tag>`. When `RELEASE_GITHUB_TOKEN` is configured, it also
+creates the GitHub Release automatically. Without that secret, the workflow
+finishes with a notice instead of failing after a successful build: an
+authorized maintainer must create a draft for the existing annotated tag,
+upload every file from the flat bundle, verify the 29-file count, and publish
+the draft. GitHub then freezes the tag and assets.
 
 Builds use `CGO_ENABLED=0`, `-trimpath`, an empty build ID, the tag as version,
 the exact commit, and the commit timestamp. GitHub provenance records the hosted
