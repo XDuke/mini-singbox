@@ -215,7 +215,11 @@ TasksMax=64
 以上是该参考环境的实测值，不是对所有线路和宿主机的性能保证。验证摘要见
 [正式版验证记录](docs/validation.md)。
 
-## Docker Compose
+## Docker Compose（仅开发和验证）
+
+`compose.yaml` 会在当前机器从源码构建镜像，不是 128 MiB 小虚拟机的安装方式。
+小虚拟机必须使用前面的签名 Release 一行部署；该流程只下载 CI 二进制，不编译。
+需要复现容器硬化检查的开发机可以执行：
 
 ```sh
 git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git

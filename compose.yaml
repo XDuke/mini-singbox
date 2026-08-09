@@ -2,7 +2,6 @@ name: mini-singbox
 
 services:
   mini-singbox:
-    image: ghcr.io/xduke/mini-singbox:${MINI_SINGBOX_VERSION:-v1.0.0}
     build:
       context: .
     user: "65532:65532"
@@ -28,7 +27,6 @@ services:
 
   generate:
     profiles: ["tools"]
-    image: ghcr.io/xduke/mini-singbox:${MINI_SINGBOX_VERSION:-v1.0.0}
     build:
       context: .
     user: "65532:65532"
