@@ -64,10 +64,13 @@ jobs:
         run: |
           set -eu
           mkdir dist
+          build_dir="$RUNNER_TEMP/mini-singbox-release-build"
+          mkdir -p "$build_dir"
           build_time="$(git show -s --format=%cI HEAD)"
           ldflags="-s -w -buildid= -X github.com/XDuke/mini-singbox/internal/version.Version=$VERSION -X github.com/XDuke/mini-singbox/internal/version.Commit=$COMMIT -X github.com/XDuke/mini-singbox/internal/version.BuildTime=$build_time -X github.com/XDuke/mini-singbox/internal/version.Dirty=false"
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o dist/mini-singbox-linux-amd64 ./cmd/mini-singbox
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o dist/mini-singbox-linux-arm64 ./cmd/mini-singbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o "$build_dir/mini-singbox-linux-amd64" ./cmd/mini-singbox
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags with_utls -trimpath -ldflags="$ldflags" -o "$build_dir/mini-singbox-linux-arm64" ./cmd/mini-singbox
+          mv "$build_dir/mini-singbox-linux-amd64" "$build_dir/mini-singbox-linux-arm64" dist/
           file dist/mini-singbox-linux-amd64 | grep -q 'statically linked'
           file dist/mini-singbox-linux-arm64 | grep -q 'statically linked'
           ! ldd dist/mini-singbox-linux-amd64 2>&1 | grep -q '=>'
@@ -77,6 +80,10 @@ jobs:
           dist/mini-singbox-linux-amd64 version | grep -Fx 'dirty_build false'
           go version -m dist/mini-singbox-linux-amd64 | tee dist/go-version-amd64.txt
           go version -m dist/mini-singbox-linux-arm64 | tee dist/go-version-arm64.txt
+          grep -F 'vcs.modified=false' dist/go-version-amd64.txt
+          grep -F 'vcs.modified=false' dist/go-version-arm64.txt
+          ! grep -F '+dirty' dist/go-version-amd64.txt
+          ! grep -F '+dirty' dist/go-version-arm64.txt
           go tool nm dist/mini-singbox-linux-amd64 > dist/nm-amd64.txt 2>&1 || grep -q 'no symbols' dist/nm-amd64.txt
       - name: Compiled dependency and forbidden-content audit
         run: |
@@ -146,6 +153,10 @@ jobs:
             dist/SHA256SUMS.minisig
             dist/SBOM.spdx.json
             dist/provenance.intoto.jsonl
+            dist/go-version-amd64.txt
+            dist/go-version-arm64.txt
+            dist/compiled-deps-linux-amd64.txt
+            dist/upstream-compiled-network-utilities.txt
             LICENSE
             NOTICE
             README.md
@@ -182,6 +193,10 @@ jobs:
             dist/SHA256SUMS.minisig
             dist/SBOM.spdx.json
             dist/provenance.intoto.jsonl
+            dist/go-version-amd64.txt
+            dist/go-version-arm64.txt
+            dist/compiled-deps-linux-amd64.txt
+            dist/upstream-compiled-network-utilities.txt
             LICENSE
             NOTICE
             README.md
