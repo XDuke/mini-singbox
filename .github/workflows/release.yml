@@ -133,16 +133,13 @@ jobs:
             dist/go-version-amd64.txt
             dist/go-version-arm64.txt
             dist/nm-amd64.txt
-      - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Preserve signed release bundle
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ steps.tag.outputs.commit }}
-          fail_on_unmatched_files: true
-          generate_release_notes: true
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
-          files: |
+          name: release-bundle-${{ env.RELEASE_TAG }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
             dist/mini-singbox-linux-amd64
             dist/mini-singbox-linux-arm64
             dist/SHA256SUMS
@@ -168,3 +165,55 @@ jobs:
             packaging/systemd/mini-singbox.service
             packaging/systemd/mini-singbox-container.service
             packaging/openrc/mini-singbox
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          set -eu
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; refusing to replace immutable assets" >&2
+            exit 1
+          fi
+          files=(
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+            dist/SHA256SUMS
+            dist/SHA256SUMS.minisig
+            dist/SBOM.spdx.json
+            dist/provenance.intoto.jsonl
+            LICENSE
+            NOTICE
+            README.md
+            CHANGELOG.md
+            SECURITY.md
+            MIGRATION.md
+            docs/release.md
+            docs/nat-vps.md
+            docs/v1.0.0-readiness.md
+            docs/validation.md
+            examples/config.json
+            release/minisign.pub
+            scripts/deploy.sh
+            scripts/install.sh
+            scripts/uninstall.sh
+            scripts/mini-singboxctl
+            packaging/systemd/mini-singbox.service
+            packaging/systemd/mini-singbox-container.service
+            packaging/openrc/mini-singbox
+          )
+          args=(
+            release create "$RELEASE_TAG"
+            "${files[@]}"
+            --repo "$GITHUB_REPOSITORY"
+            --verify-tag
+            --target "$RELEASE_COMMIT"
+            --title "mini-singbox $RELEASE_TAG"
+            --notes-file CHANGELOG.md
+          )
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            args+=(--prerelease)
+          else
+            args+=(--latest)
+          fi
+          gh "${args[@]}"
