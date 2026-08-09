@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing immutable annotated tag to release"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -14,16 +20,28 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     environment: release
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref }}
           fetch-depth: 0
       - name: Validate exact tag
+        id: tag
         run: |
-          printf '%s\n' "$GITHUB_REF_NAME" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
-          test "$(git tag --points-at HEAD | grep -Fx "$GITHUB_REF_NAME")" = "$GITHUB_REF_NAME"
-          test "$(git cat-file -t "$GITHUB_REF_NAME")" = tag
+          set -eu
+          printf '%s\n' "$RELEASE_TAG" | grep -Eq '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$'
+          original_tag_ref="refs/mini-singbox-release/tags/$RELEASE_TAG"
+          git fetch --force --no-tags origin "refs/tags/$RELEASE_TAG:$original_tag_ref"
+          test "$(git cat-file -t "$original_tag_ref")" = tag
+          release_commit="$(git rev-parse "$original_tag_ref^{}")"
+          test "$(git rev-parse HEAD)" = "$release_commit"
+          remote_commit="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG^{}" | awk '{ print $1 }')"
+          test -n "$remote_commit"
+          test "$remote_commit" = "$release_commit"
           test -z "$(git status --porcelain)"
+          printf 'commit=%s\n' "$release_commit" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v6
         with:
           go-version: 1.26.5
@@ -41,8 +59,8 @@ jobs:
           "$(go env GOPATH)/bin/govulncheck" -tags with_utls ./...
       - name: Build release binaries
         env:
-          VERSION: ${{ github.ref_name }}
-          COMMIT: ${{ github.sha }}
+          VERSION: ${{ env.RELEASE_TAG }}
+          COMMIT: ${{ steps.tag.outputs.commit }}
         run: |
           set -eu
           mkdir dist
@@ -108,7 +126,7 @@ jobs:
       - name: Upload audit evidence
         uses: actions/upload-artifact@v4
         with:
-          name: release-audit-${{ github.ref_name }}
+          name: release-audit-${{ env.RELEASE_TAG }}
           path: |
             dist/compiled-deps-linux-amd64.txt
             dist/upstream-compiled-network-utilities.txt
@@ -118,10 +136,12 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          target_commitish: ${{ steps.tag.outputs.commit }}
           fail_on_unmatched_files: true
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-') }}
-          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
+          make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
           files: |
             dist/mini-singbox-linux-amd64
             dist/mini-singbox-linux-arm64
