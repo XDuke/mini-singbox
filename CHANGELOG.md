@@ -3,6 +3,29 @@
 All notable changes to `mini-singbox` are recorded here. The project follows
 Semantic Versioning.
 
+## Unreleased
+
+### Added
+
+- Short `bootstrap.sh` entry that resolves the latest stable mini-singbox release,
+  verifies an exact annotated tag, and reuses the signed deployment chain.
+- Signed on-demand `mini-singbox-update` and `mini-singbox-uninstall` commands.
+- Weekly Dependabot tracking limited to the official sing-box Go module; updates
+  still require review, CI, and a new immutable mini-singbox release.
+
+### Changed
+
+- Updated the embedded official sing-box module from v1.13.16 to v1.13.18.
+- Re-running the bootstrap or update command preserves existing credentials and
+  rollback state unless regeneration is explicitly requested.
+
+### Security
+
+- Stable bootstrap rejects prerelease and lightweight tags, verifies the official
+  origin, exact tag commit, and clean checkout, and never bypasses TLS checks.
+- Target VMs continue to download verified static project binaries and never
+  compile or directly replace an unverified upstream sing-box executable.
+
 ## v1.0.0 - 2026-08-09
 
 ### Added

@@ -48,6 +48,11 @@ jobs:
           cache: true
       - run: test "$(go env GOVERSION)" = go1.26.5
       - run: test -z "$(gofmt -l .)"
+      - name: Stable bootstrap guardrails
+        run: |
+          bash -n bootstrap.sh tests/bootstrap.sh
+          shellcheck --shell bash bootstrap.sh tests/bootstrap.sh
+          tests/bootstrap.sh
       - run: go mod verify
       - run: go vet -tags with_utls ./...
       - run: go test -tags with_utls ./...
@@ -137,6 +142,7 @@ jobs:
             LICENSE
             NOTICE
             README.md
+            bootstrap.sh
             CHANGELOG.md
             SECURITY.md
             MIGRATION.md
@@ -188,6 +194,7 @@ jobs:
             LICENSE
             NOTICE
             README.md
+            bootstrap.sh
             CHANGELOG.md
             SECURITY.md
             MIGRATION.md

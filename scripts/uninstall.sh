@@ -17,7 +17,9 @@ if command -v rc-service >/dev/null 2>&1; then
 	rm -f /etc/init.d/mini-singbox
 fi
 
-rm -f /usr/local/bin/mini-singbox /usr/local/bin/mini-singboxctl
+rm -f /usr/local/bin/mini-singbox \
+	/usr/local/bin/mini-singboxctl /usr/local/bin/mini-singbox-update \
+	/usr/local/bin/mini-singbox-uninstall
 
 if [ "${PURGE:-0}" = "1" ]; then
 	rm -rf /etc/mini-singbox

@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---|---|
-| `v1.0.x` | Yes |
+| Latest stable GitHub Release | Yes |
+| Superseded stable releases | No |
 | Candidates and branch builds | No |
 
 Only immutable GitHub Releases with a minisign-verified checksum manifest are
@@ -20,8 +21,10 @@ reproduction steps, and the smallest non-secret configuration possible.
 ## Security boundaries
 
 The service has no management API, remote configuration, telemetry, dynamic
-users, traffic accounting, subscription server, or update checker. `version`,
-`check`, `generate`, and idle service operation do not make project-initiated
+users, traffic accounting, subscription server, or background update checker.
+The signed `mini-singbox-update` tool makes network requests only when a user
+explicitly runs it. `version`, `check`, `generate`, and idle service operation do
+not make project-initiated
 outbound connections. Authenticated proxy traffic and Reality handshakes are
 normal data-plane traffic and are outside that idle guarantee.
 

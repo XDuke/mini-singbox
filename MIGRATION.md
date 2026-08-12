@@ -11,6 +11,9 @@ configuration:/etc/mini-singbox
 backups:      /var/backups/mini-singbox
 ```
 
+A release containing the new short bootstrap additionally installs
+`/usr/local/bin/mini-singbox-update` and `/usr/local/bin/mini-singbox-uninstall`.
+
 Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
@@ -24,7 +27,7 @@ service-user ownership. Run `mini-singbox check` before starting the new unit.
 To intentionally rotate every credential after migration:
 
 ```sh
-sudo env MINI_SINGBOX_REGENERATE=1 ./scripts/deploy.sh
+MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 Existing clients stop working after regeneration. Ordinary upgrades preserve

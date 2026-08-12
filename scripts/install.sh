@@ -69,8 +69,14 @@ verify_release_file() {
 
 script_root="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
 control_source="$script_root/scripts/mini-singboxctl"
+update_source="$script_root/bootstrap.sh"
+uninstall_source="$script_root/scripts/uninstall.sh"
 [ -f "$control_source" ] || fail "control tool missing from release package"
+[ -f "$update_source" ] || fail "update tool missing from release package"
+[ -f "$uninstall_source" ] || fail "uninstall tool missing from release package"
 verify_release_file "$control_source" "scripts/mini-singboxctl"
+verify_release_file "$update_source" "bootstrap.sh"
+verify_release_file "$uninstall_source" "scripts/uninstall.sh"
 
 file "$temporary_directory/$asset" | grep -q 'ELF' || fail "download is not an ELF binary"
 file "$temporary_directory/$asset" | grep -Eq 'statically linked|static-pie linked' || fail "binary is not static"
@@ -94,6 +100,8 @@ fi
 install -d -m 0755 "$INSTALL_DIR"
 install -m 0755 "$temporary_directory/$asset" "$INSTALL_DIR/mini-singbox"
 install -m 0755 "$control_source" "$INSTALL_DIR/mini-singboxctl"
+install -m 0755 "$update_source" "$INSTALL_DIR/mini-singbox-update"
+install -m 0755 "$uninstall_source" "$INSTALL_DIR/mini-singbox-uninstall"
 install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR"
 
 if [ ! -f "$CONFIG_DIR/config.json" ]; then
@@ -138,3 +146,5 @@ echo "installed mini-singbox $VERSION"
 echo "configuration: $CONFIG_DIR/config.json"
 echo "client information: $CONFIG_DIR/client-info.json"
 echo "control: sudo mini-singboxctl status"
+echo "update: sudo mini-singbox-update"
+echo "uninstall: sudo mini-singbox-uninstall"

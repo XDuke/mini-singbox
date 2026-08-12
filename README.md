@@ -6,8 +6,8 @@
 
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
-`v1.13.16`，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、
-限速或自动更新守护进程。
+内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
+自动更新守护进程。`main` 当前嵌入 `v1.13.18`，已发布版本以内置版本信息为准。
 
 ## 主要特点
 
@@ -36,21 +36,39 @@ Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。
 
 ## 一行部署
 
-推荐 Debian 12/13 或 Ubuntu 24.04 的 systemd 环境。下面的命令以 Bash 开头，
-克隆精确的 `v1.0.0` 标签后运行签名校验部署器：
+推荐 Debian 12/13 或 Ubuntu 24.04 的 systemd 环境。安装和以后升级都运行同一条命令：
 
 ```bash
-bash -c 'set -euo pipefail; tag=v1.0.0; dir=mini-singbox; test ! -e "$dir" || { echo "$dir already exists" >&2; exit 1; }; git clone --branch "$tag" --depth 1 https://github.com/XDuke/mini-singbox.git "$dir"; cd "$dir"; if (( EUID == 0 )); then ./scripts/deploy.sh; else sudo ./scripts/deploy.sh; fi'
+bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
-该命令不会使用 `curl | bash`，也不会下载 `latest` 或第三方二进制。仓库内容可以先
-检查再执行；`deploy.sh` 只接受当前源码提交对应的正式标签或提交专属候选标签。
+`bootstrap.sh` 只负责解析 GitHub 最新正式版、克隆精确标签并启动部署器。它拒绝
+预发布和轻量标签，核对官方仓库、标签提交和干净工作区；`deploy.sh` 随后验证
+minisign、SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二进制，不编译。
 
-分步执行方式：
+普通重跑会先备份并保留 UUID、密码、Reality 私钥和证书；只有显式设置
+`MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
+
+```bash
+MINI_SINGBOX_VERSION=v1.0.0 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+```
+
+短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
+不可变并带签名的 Release。需要先审阅入口脚本时：
+
+```sh
+curl -fL --proto '=https' --tlsv1.2 -o bootstrap.sh \
+  https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh
+less bootstrap.sh
+bash bootstrap.sh
+```
+
+完全固定、分步审阅方式：
 
 ```sh
 git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
+test "$(git cat-file -t refs/tags/v1.0.0)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -72,12 +90,11 @@ sudo ./scripts/deploy.sh
 
 先在服务商面板创建三条映射，再执行：
 
-```sh
-sudo env \
-  MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
-  MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
-  MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
-  ./scripts/deploy.sh
+```bash
+MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
+MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
+MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
+bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 - Reality：公网 TCP → `20001/tcp`
@@ -89,25 +106,47 @@ sudo env \
 
 ## 常用部署选项
 
-| 目的 | 命令 |
+把下表变量直接放在上方一行部署命令前；未设置的选项保持默认值。
+
+| 目的 | 一行部署命令前缀 |
 |---|---|
-| 保留配置升级/重装 | `sudo ./scripts/deploy.sh` |
-| 重新生成全部凭据 | `sudo env MINI_SINGBOX_REGENERATE=1 ./scripts/deploy.sh` |
-| 只刷新公网地址、端口和二维码 | `sudo env MINI_SINGBOX_REFRESH_DELIVERY=1 ... ./scripts/deploy.sh` |
-| 强制使用 IPv4 | `sudo env MINI_SINGBOX_IP_FAMILY=4 ./scripts/deploy.sh` |
-| 强制使用 IPv6 | `sudo env MINI_SINGBOX_IP_FAMILY=6 ./scripts/deploy.sh` |
-| 只启用 Reality | `sudo env MINI_SINGBOX_PROTOCOLS=reality ./scripts/deploy.sh` |
-| 只启用 Hysteria2 | `sudo env MINI_SINGBOX_PROTOCOLS=hy2 ./scripts/deploy.sh` |
-| 只启用 AnyTLS | `sudo env MINI_SINGBOX_PROTOCOLS=anytls ./scripts/deploy.sh` |
-| Reality + AnyTLS | `sudo env MINI_SINGBOX_PROTOCOLS=reality,anytls ./scripts/deploy.sh` |
+| 保留配置升级/重装 | 无，直接重跑 |
+| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.0.0` |
+| 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
+| 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
+| 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
+| 强制使用 IPv6 | `MINI_SINGBOX_IP_FAMILY=6` |
+| 只启用 Reality | `MINI_SINGBOX_PROTOCOLS=reality` |
+| 只启用 Hysteria2 | `MINI_SINGBOX_PROTOCOLS=hy2` |
+| 只启用 AnyTLS | `MINI_SINGBOX_PROTOCOLS=anytls` |
+| Reality + AnyTLS | `MINI_SINGBOX_PROTOCOLS=reality,anytls` |
+
+例如重新生成全部凭据：
+
+```bash
+MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+```
 
 普通升级不会轮换 UUID、密码或私钥。只有 `MINI_SINGBOX_REGENERATE=1` 会使旧客户端
 配置失效。修改 NAT 公网端口时使用 `MINI_SINGBOX_REFRESH_DELIVERY=1`。
+
+## 内核与项目升级
+
+mini-singbox 项目版本和内置 sing-box 内核版本相互独立。仓库每周只为官方
+`github.com/sagernet/sing-box` 检查更新并创建依赖 PR，不自动合并、不直接替换服务器
+二进制。每次升级必须通过单元测试、竞态测试、漏洞扫描、禁用功能审计、amd64/arm64
+静态构建和发布签名，审核后再发布新的 mini-singbox 正式版。
+
+服务器无需运行更新守护进程。从包含本次改造的下一个正式版开始，可执行
+`sudo mini-singbox-update`，或重跑
+同一条一行部署命令，即可升级并保留凭据；`sudo mini-singboxctl version` 会同时显示
+mini-singbox 与 `sing_box_version`。
 
 ## 全部部署变量
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
+| `MINI_SINGBOX_VERSION` | GitHub 最新正式版 | bootstrap 固定精确项目版本 |
 | `MINI_SINGBOX_PROTOCOLS` | `reality,hy2,anytls` | 启用协议，逗号分隔 |
 | `MINI_SINGBOX_LISTEN` | `::` | 内部监听 IP 字面量 |
 | `MINI_SINGBOX_REALITY_PORT` | `20001` | Reality 内部 TCP 端口 |
@@ -130,23 +169,25 @@ sudo env \
 
 关闭自动探测时必须显式提供所需值：
 
-```sh
-sudo env \
-  MINI_SINGBOX_AUTO_DETECT=0 \
-  MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10 \
-  MINI_SINGBOX_TLS_SAN=203.0.113.10 \
-  MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com \
-  MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
-  ./scripts/deploy.sh
+```bash
+MINI_SINGBOX_AUTO_DETECT=0 \
+MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10 \
+MINI_SINGBOX_TLS_SAN=203.0.113.10 \
+MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com \
+MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
+bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 ## 运维命令
 
-一键部署会安装 `/usr/local/bin/mini-singboxctl`。它是按需执行的本地工具，不常驻、
-不监听端口、不联网。
+从包含本次改造的下一个正式版开始，一键部署会安装三个按需工具，均不常驻、不监听
+端口。`mini-singboxctl` 严格离线；只有用户显式执行 `mini-singbox-update` 时才访问
+GitHub。当前 `v1.0.0` 尚未包含后两个快捷命令，升级时重跑上方一行部署命令。
 
 | 命令 | 作用 |
 |---|---|
+| `sudo mini-singbox-update` | 安装/升级到最新正式版，保留现有凭据 |
+| `sudo mini-singbox-uninstall` | 卸载服务和程序，默认保留配置与密钥 |
 | `sudo mini-singboxctl status` | 检查版本、配置、服务、内存、任务、端口和证书 |
 | `sudo mini-singboxctl check` | 仅校验配置，不启动监听器 |
 | `sudo mini-singboxctl certificate` | 检查 TLS 证书到期时间 |
@@ -280,16 +321,24 @@ go version -m mini-singbox-linux-amd64
 
 ## 卸载
 
+从下一个正式版开始可直接使用以下命令。当前 `v1.0.0` 需要从精确标签取得脚本：
+
+```sh
+git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git mini-singbox-v1.0.0
+```
+
 保留配置和密钥：
 
 ```sh
-sudo ./scripts/uninstall.sh
+sudo mini-singbox-uninstall
+# 当前 v1.0.0：sudo ./mini-singbox-v1.0.0/scripts/uninstall.sh
 ```
 
 永久删除配置和凭据：
 
 ```sh
-sudo env PURGE=1 ./scripts/uninstall.sh
+sudo env PURGE=1 mini-singbox-uninstall
+# 当前 v1.0.0：sudo env PURGE=1 ./mini-singbox-v1.0.0/scripts/uninstall.sh
 ```
 
 `PURGE=1` 不可由卸载脚本恢复；如仍需旧客户端，应先备份 `/etc/mini-singbox`。

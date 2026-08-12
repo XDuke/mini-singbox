@@ -3,8 +3,8 @@ module github.com/XDuke/mini-singbox
 go 1.26.5
 
 require (
-	github.com/sagernet/sing v0.8.12-0.20260726145744-ef2df370afca
-	github.com/sagernet/sing-box v1.13.16
+	github.com/sagernet/sing v0.8.12
+	github.com/sagernet/sing-box v1.13.18
 )
 
 require (

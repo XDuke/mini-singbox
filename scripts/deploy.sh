@@ -5,6 +5,8 @@ SERVICE="mini-singbox.service"
 SERVICE_USER="mini-singbox"
 INSTALL_PATH="/usr/local/bin/mini-singbox"
 CONTROL_PATH="/usr/local/bin/mini-singboxctl"
+UPDATE_PATH="/usr/local/bin/mini-singbox-update"
+UNINSTALL_PATH="/usr/local/bin/mini-singbox-uninstall"
 CONFIG_DIR="/etc/mini-singbox"
 UNIT_PATH="/etc/systemd/system/mini-singbox.service"
 BACKUP_ROOT="/var/backups/mini-singbox"
@@ -37,6 +39,10 @@ SOURCE_DIR="$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd -P)"
 [ -f "$SOURCE_DIR/go.mod" ] || fail "go.mod not found next to the deployment script"
 [ -f "$SOURCE_DIR/packaging/systemd/mini-singbox.service" ] || fail "packaged systemd unit is missing"
 [ -f "$SOURCE_DIR/scripts/mini-singboxctl" ] || fail "control tool is missing"
+[ -f "$SOURCE_DIR/bootstrap.sh" ] || fail "update tool is missing"
+[ -f "$SOURCE_DIR/scripts/uninstall.sh" ] || fail "uninstall tool is missing"
+UPDATE_SOURCE="$SOURCE_DIR/bootstrap.sh"
+UNINSTALL_SOURCE="$SOURCE_DIR/scripts/uninstall.sh"
 
 UNIT_SOURCE="$SOURCE_DIR/packaging/systemd/mini-singbox.service"
 CONTROL_SOURCE="$SOURCE_DIR/scripts/mini-singboxctl"
@@ -539,6 +545,8 @@ DEPLOYMENT_STARTED=0
 DEPLOYMENT_SUCCEEDED=0
 HAD_BINARY=0
 HAD_CONTROL=0
+HAD_UPDATE=0
+HAD_UNINSTALL=0
 HAD_UNIT=0
 HAD_CONFIG=0
 WAS_ACTIVE=0
@@ -560,6 +568,16 @@ rollback() {
 		install -m 0755 "$BACKUP_DIR/mini-singboxctl" "$CONTROL_PATH"
 	else
 		rm -f "$CONTROL_PATH"
+	fi
+	if [ "$HAD_UPDATE" -eq 1 ]; then
+		install -m 0755 "$BACKUP_DIR/mini-singbox-update" "$UPDATE_PATH"
+	else
+		rm -f "$UPDATE_PATH"
+	fi
+	if [ "$HAD_UNINSTALL" -eq 1 ]; then
+		install -m 0755 "$BACKUP_DIR/mini-singbox-uninstall" "$UNINSTALL_PATH"
+	else
+		rm -f "$UNINSTALL_PATH"
 	fi
 
 	if [ "$HAD_UNIT" -eq 1 ]; then
@@ -668,6 +686,8 @@ verify_signed_checkout_file() {
 if [ "$SIGNED_RELEASE" -eq 1 ]; then
 	verify_signed_checkout_file "$SOURCE_DIR/scripts/deploy.sh" scripts/deploy.sh
 	verify_signed_checkout_file "$CONTROL_SOURCE" scripts/mini-singboxctl
+	verify_signed_checkout_file "$UPDATE_SOURCE" bootstrap.sh
+	verify_signed_checkout_file "$UNINSTALL_SOURCE" scripts/uninstall.sh
 	case "$UNIT_PROFILE" in
 		full) unit_manifest_name=packaging/systemd/mini-singbox.service ;;
 		container-compatible) unit_manifest_name=packaging/systemd/mini-singbox-container.service ;;
@@ -790,6 +810,14 @@ if [ -f "$CONTROL_PATH" ]; then
 	HAD_CONTROL=1
 	cp -a "$CONTROL_PATH" "$BACKUP_DIR/mini-singboxctl"
 fi
+if [ -f "$UPDATE_PATH" ]; then
+	HAD_UPDATE=1
+	cp -a "$UPDATE_PATH" "$BACKUP_DIR/mini-singbox-update"
+fi
+if [ -f "$UNINSTALL_PATH" ]; then
+	HAD_UNINSTALL=1
+	cp -a "$UNINSTALL_PATH" "$BACKUP_DIR/mini-singbox-uninstall"
+fi
 if [ -f "$UNIT_PATH" ]; then
 	HAD_UNIT=1
 	cp -a "$UNIT_PATH" "$BACKUP_DIR/mini-singbox.service"
@@ -806,10 +834,12 @@ if systemctl is-enabled --quiet "$SERVICE"; then
 fi
 
 DEPLOYMENT_STARTED=1
-log "Installing the binary, on-demand control tool, configuration, and hardened systemd unit"
+log "Installing the binary, on-demand tools, configuration, and hardened systemd unit"
 systemctl stop "$SERVICE" >/dev/null 2>&1 || true
 install -m 0755 "$BUILD_BINARY" "$INSTALL_PATH"
 install -m 0755 "$CONTROL_SOURCE" "$CONTROL_PATH"
+install -m 0755 "$UPDATE_SOURCE" "$UPDATE_PATH"
+install -m 0755 "$UNINSTALL_SOURCE" "$UNINSTALL_PATH"
 install -m 0644 "$UNIT_SOURCE" "$UNIT_PATH"
 
 if [ "$CONFIG_REPLACED" -eq 1 ]; then
@@ -971,6 +1001,8 @@ printf 'unit profile:  %s\n' "$UNIT_PROFILE"
 printf 'configuration: %s/config.json\n' "$CONFIG_DIR"
 printf 'client info:   %s/client-info.json (sensitive)\n' "$CONFIG_DIR"
 printf 'control:       sudo mini-singboxctl status\n'
+printf 'update:        sudo mini-singbox-update\n'
+printf 'uninstall:     sudo mini-singbox-uninstall\n'
 if [ "$HAS_SHARE_LINKS" -eq 1 ]; then
 	printf 'share links:   %s/share-*.txt (sensitive)\n' "$CONFIG_DIR"
 	printf 'QR images:     %s/share-*.png (sensitive)\n' "$CONFIG_DIR"

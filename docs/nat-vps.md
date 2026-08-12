@@ -28,12 +28,11 @@
 公网 IP 可以由脚本自动探测，Reality 握手域名也可以自动优选；面板分配的公网端口
 无法从实例内部可靠推断，因此首次部署时需要把三项端口传给脚本：
 
-```sh
-sudo env \
-  MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
-  MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
-  MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
-  ./scripts/deploy.sh
+```bash
+MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
+MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
+MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
+bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 这里的数字只是命令格式示例。使用控制台当前显示的端口，不要照抄。脚本会让服务
@@ -50,7 +49,7 @@ sudo env \
   MINI_SINGBOX_PUBLIC_REALITY_PORT=新的Reality公网TCP端口 \
   MINI_SINGBOX_PUBLIC_HY2_PORT=新的Hysteria2公网UDP端口 \
   MINI_SINGBOX_PUBLIC_ANYTLS_PORT=新的AnyTLS公网TCP端口 \
-  ./scripts/deploy.sh
+  bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 这条路径只重建 `client-info.json`、`share-*.txt` 和 `share-*.png`。现有 UUID、密码、

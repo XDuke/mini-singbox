@@ -11,6 +11,9 @@ Use Go 1.26.5 on Linux and a clean tree:
 test "$(go env GOVERSION)" = go1.26.5
 test -z "$(git status --porcelain)"
 test -z "$(gofmt -l .)"
+bash -n bootstrap.sh tests/bootstrap.sh
+shellcheck --shell bash bootstrap.sh tests/bootstrap.sh
+tests/bootstrap.sh
 go mod verify
 go vet -tags with_utls ./...
 go test -tags with_utls ./...
@@ -41,8 +44,9 @@ unable to publish a Release for a protected formal tag even when the workflow's
 Create an annotated tag on the reviewed commit and push only that tag:
 
 ```sh
-git tag -a v1.0.0 -m 'mini-singbox v1.0.0'
-git push origin v1.0.0
+version=v1.1.0
+git tag -a "$version" -m "mini-singbox $version"
+git push origin "$version"
 ```
 
 Enable release immutability in the repository before publishing. GitHub applies
@@ -55,14 +59,14 @@ creates:
 - `SBOM.spdx.json`
 - `provenance.intoto.jsonl`
 - Go build metadata and compiled-dependency audit evidence
-- source, license/notice, security, migration, deployment and service files
+- signed bootstrap, source, license/notice, security, migration, deployment and service files
 
-The workflow always preserves these 29 files as a flat signed Actions artifact
+The workflow always preserves these 30 files as a flat signed Actions artifact
 named `release-bundle-<tag>`. When `RELEASE_GITHUB_TOKEN` is configured, it also
 creates the GitHub Release automatically. Without that secret, the workflow
 finishes with a notice instead of failing after a successful build: an
 authorized maintainer must create a draft for the existing annotated tag,
-upload every file from the flat bundle, verify the 29-file count, and publish
+upload every file from the flat bundle, verify the 30-file count, and publish
 the draft. GitHub then freezes the tag and assets.
 
 Builds use `CGO_ENABLED=0`, `-trimpath`, an empty build ID, the tag as version,

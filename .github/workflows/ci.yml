@@ -82,9 +82,15 @@ jobs:
           test "$(head -n 1 go.mod)" = 'module github.com/XDuke/mini-singbox'
           test -z "$(git grep -nI -e 'mini-sb-local' -e 'mini-sb-agent' -e 'ashvvvvv' -e 'MINI_SB_' -- . ':(exclude).github/workflows/ci.yml' ':(exclude).github/workflows/release.yml' || true)"
       - name: Shell syntax
-        run: sh -n scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl packaging/openrc/mini-singbox tests/no-egress.sh tests/cgroup-observe.sh tests/restart-cycle.sh tests/control-tool.sh
+        run: |
+          bash -n bootstrap.sh tests/bootstrap.sh
+          sh -n scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl packaging/openrc/mini-singbox tests/no-egress.sh tests/cgroup-observe.sh tests/restart-cycle.sh tests/control-tool.sh
       - name: Shell static analysis
-        run: shellcheck --shell sh scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh
+        run: |
+          shellcheck --shell bash bootstrap.sh tests/bootstrap.sh
+          shellcheck --shell sh scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh
+      - name: Stable bootstrap guardrails
+        run: tests/bootstrap.sh
       - name: On-demand control-plane guardrails
         run: |
           test -z "$(grep -nE 'curl|wget|https?://' scripts/mini-singboxctl || true)"
