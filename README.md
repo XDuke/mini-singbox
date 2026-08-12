@@ -39,7 +39,7 @@ Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。
 推荐 Debian 12/13 或 Ubuntu 24.04 的 systemd 环境。安装和以后升级都运行同一条命令：
 
 ```bash
-bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 `bootstrap.sh` 只负责解析 GitHub 最新正式版、克隆精确标签并启动部署器。它拒绝
@@ -50,7 +50,7 @@ minisign、SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.0.0 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.0.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -94,7 +94,7 @@ sudo ./scripts/deploy.sh
 MINI_SINGBOX_PUBLIC_REALITY_PORT=51165 \
 MINI_SINGBOX_PUBLIC_HY2_PORT=25421 \
 MINI_SINGBOX_PUBLIC_ANYTLS_PORT=36279 \
-bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 - Reality：公网 TCP → `20001/tcp`
@@ -124,7 +124,7 @@ bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.github
 例如重新生成全部凭据：
 
 ```bash
-MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 普通升级不会轮换 UUID、密码或私钥。只有 `MINI_SINGBOX_REGENERATE=1` 会使旧客户端
@@ -175,7 +175,7 @@ MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10 \
 MINI_SINGBOX_TLS_SAN=203.0.113.10 \
 MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com \
 MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
-bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 ## 运维命令
