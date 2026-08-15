@@ -5,6 +5,10 @@ Semantic Versioning.
 
 ## Unreleased
 
+No changes yet.
+
+## v1.1.0 - 2026-08-15
+
 ### Added
 
 - Short `bootstrap.sh` entry that resolves the latest stable mini-singbox release,

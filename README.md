@@ -7,7 +7,28 @@
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。`main` 当前嵌入 `v1.13.18`，已发布版本以内置版本信息为准。
+自动更新守护进程。`v1.1.0` 内置官方 sing-box `v1.13.18`。
+
+## v1.1.0 更新
+
+`v1.1.0` 是一次面向小内存 VPS 的运维与网络安全升级，普通升级会保留现有 UUID、
+密码、Reality 私钥和 TLS 证书，客户端无需重新导入。
+
+- 新增部署后自动 TCP 调优：本地识别 Reality/AnyTLS TCP 工作负载、cgroup v1/v2
+  有效内存和内核能力，只应用可验证的 BBR、FQ 与 MTU 黑洞探测安全项；
+- 新增 `tune detect/plan/apply/verify/status/rollback`，所有写入都有前置基线、回读验证、
+  所有权漂移保护和精确回滚；纯 Hysteria2 部署不会修改 TCP；
+- 新增 `mini-singbox-update` 与 `mini-singbox-uninstall`，继续保持按需执行、无常驻进程；
+- 一行部署入口现在解析最新不可变正式标签，部署器仍验证 minisign、SHA-256、ELF
+  架构、静态链接、版本和完整 Git 提交；
+- 官方 sing-box 从 `v1.13.16` 更新到 `v1.13.18`，构建工具链更新到包含标准库安全修复的
+  Go `1.26.6`；
+- 自动调优不测速、不访问公共 DNS，不修改 buffer、RPS/RFS、路由、防火墙、内核、
+  模块或流量整形；可用 `MINI_SINGBOX_AUTO_TUNE=0` 完全关闭。
+
+从 `v1.0.0` 升级只需重新运行下方“一行部署”命令。升级前后的配置备份和 TCP 调优
+基线相互独立；如需先观察计划，可在升级后执行
+`sudo mini-singboxctl tune status`。
 
 ## 主要特点
 
@@ -52,7 +73,7 @@ minisign、SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.0.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.1.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -68,9 +89,9 @@ bash bootstrap.sh
 完全固定、分步审阅方式：
 
 ```sh
-git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.1.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
-test "$(git cat-file -t refs/tags/v1.0.0)" = tag
+test "$(git cat-file -t refs/tags/v1.1.0)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -114,7 +135,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 目的 | 一行部署命令前缀 |
 |---|---|
 | 保留配置升级/重装 | 无，直接重跑 |
-| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.0.0` |
+| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.1.0` |
 | 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
 | 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
 | 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
@@ -141,8 +162,7 @@ mini-singbox 项目版本和内置 sing-box 内核版本相互独立。仓库每
 二进制。每次升级必须通过单元测试、竞态测试、漏洞扫描、禁用功能审计、amd64/arm64
 静态构建和发布签名，审核后再发布新的 mini-singbox 正式版。
 
-服务器无需运行更新守护进程。从包含本次改造的下一个正式版开始，可执行
-`sudo mini-singbox-update`，或重跑
+服务器无需运行更新守护进程。`v1.1.0` 起可执行 `sudo mini-singbox-update`，或重跑
 同一条一行部署命令，即可升级并保留凭据；`sudo mini-singboxctl version` 会同时显示
 mini-singbox 与 `sing_box_version`。
 
@@ -185,9 +205,8 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 
 ## 运维命令
 
-从包含本次改造的下一个正式版开始，一键部署会安装三个按需工具，均不常驻、不监听
-端口。`mini-singboxctl` 严格离线；只有用户显式执行 `mini-singbox-update` 时才访问
-GitHub。当前 `v1.0.0` 尚未包含后两个快捷命令，升级时重跑上方一行部署命令。
+`v1.1.0` 一键部署会安装三个按需工具，均不常驻、不监听端口。`mini-singboxctl`
+严格离线；只有用户显式执行 `mini-singbox-update` 时才访问 GitHub。
 
 | 命令 | 作用 |
 |---|---|
@@ -308,7 +327,7 @@ TasksMax=64
 需要复现容器硬化检查的开发机可以执行：
 
 ```sh
-git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.1.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
 mkdir config
 sudo chown 65532:65532 config
@@ -366,24 +385,18 @@ go version -m mini-singbox-linux-amd64
 
 ## 卸载
 
-从下一个正式版开始可直接使用以下命令。当前 `v1.0.0` 需要从精确标签取得脚本：
-
-```sh
-git clone --branch v1.0.0 --depth 1 https://github.com/XDuke/mini-singbox.git mini-singbox-v1.0.0
-```
+`v1.1.0` 起可直接使用以下命令。
 
 保留配置和密钥：
 
 ```sh
 sudo mini-singbox-uninstall
-# 当前 v1.0.0：sudo ./mini-singbox-v1.0.0/scripts/uninstall.sh
 ```
 
 永久删除配置和凭据：
 
 ```sh
 sudo env PURGE=1 mini-singbox-uninstall
-# 当前 v1.0.0：sudo env PURGE=1 ./mini-singbox-v1.0.0/scripts/uninstall.sh
 ```
 
 卸载会先恢复 mini-singbox 管理的 TCP 参数，再删除程序。`PURGE=1` 不可由卸载脚本

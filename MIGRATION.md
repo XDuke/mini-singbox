@@ -11,10 +11,10 @@ configuration:/etc/mini-singbox
 backups:      /var/backups/mini-singbox
 ```
 
-A release containing the new short bootstrap additionally installs
+`v1.1.0` additionally installs
 `/usr/local/bin/mini-singbox-update` and `/usr/local/bin/mini-singbox-uninstall`.
 
-The next release also runs conservative, offline TCP tuning after a successful
+`v1.1.0` also runs conservative, offline TCP tuning after a successful
 deployment. It snapshots original values and owns only its dedicated
 `/etc/sysctl.d/90-mini-singbox-tune.conf`; root-only baselines and history live
 under `/var/lib/mini-singbox/tune`. Set `MINI_SINGBOX_AUTO_TUNE=0` before the
@@ -26,7 +26,7 @@ Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
 
-For a clean installation, deploy `v1.0.0` and import the newly generated
+For a clean installation, deploy `v1.1.0` and import the newly generated
 per-protocol QR codes. For an early pre-v1 candidate, keep a private backup,
 stop its service, and copy only the candidate's local `config.json`, Reality
 private key, TLS key, and TLS certificate into `/etc/mini-singbox` with the new
