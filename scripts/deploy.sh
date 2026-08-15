@@ -93,6 +93,7 @@ PUBLIC_HY2_PORT="${MINI_SINGBOX_PUBLIC_HY2_PORT:-}"
 PUBLIC_ANYTLS_PORT="${MINI_SINGBOX_PUBLIC_ANYTLS_PORT:-}"
 REFRESH_DELIVERY="${MINI_SINGBOX_REFRESH_DELIVERY:-0}"
 AUTO_DETECT="${MINI_SINGBOX_AUTO_DETECT:-1}"
+AUTO_TUNE="${MINI_SINGBOX_AUTO_TUNE:-1}"
 IP_FAMILY="${MINI_SINGBOX_IP_FAMILY:-auto}"
 REALITY_CANDIDATES="${MINI_SINGBOX_REALITY_CANDIDATES:-www.microsoft.com,www.amazon.com,www.mozilla.org,www.cloudflare.com}"
 NEEDS_GENERATION=0
@@ -107,6 +108,10 @@ esac
 case "$REFRESH_DELIVERY" in
 	0|1) ;;
 	*) fail "MINI_SINGBOX_REFRESH_DELIVERY must be 0 or 1" ;;
+esac
+case "$AUTO_TUNE" in
+	0|1) ;;
+	*) fail "MINI_SINGBOX_AUTO_TUNE must be 0 or 1" ;;
 esac
 if [ ! -f "$CONFIG_DIR/config.json" ] || [ "${MINI_SINGBOX_REGENERATE:-0}" = "1" ]; then
 	NEEDS_GENERATION=1
@@ -993,6 +998,18 @@ if [ "$CONFIG_REPLACED" -eq 1 ] && [ "$MISSING_SHARE_LINKS" -eq 1 ]; then
 	fail "new configuration did not produce every enabled protocol QR image"
 fi
 
+if [ "$AUTO_TUNE" -eq 1 ]; then
+	log "Applying conservative, reversible TCP tuning"
+	if "$INSTALL_PATH" tune apply -c "$CONFIG_DIR/config.json" --state-dir /var/lib/mini-singbox/tune; then
+		"$INSTALL_PATH" tune verify -c "$CONFIG_DIR/config.json" --state-dir /var/lib/mini-singbox/tune || \
+			warn "TCP tuning verification reported drift; inspect with: sudo mini-singboxctl tune status"
+	else
+		warn "automatic TCP tuning was skipped or recovered after an error; inspect with: sudo mini-singboxctl tune status"
+	fi
+else
+	log "Automatic TCP tuning disabled by MINI_SINGBOX_AUTO_TUNE=0"
+fi
+
 DEPLOYMENT_SUCCEEDED=1
 log "Deployment succeeded"
 printf 'source commit: %s\n' "$SOURCE_COMMIT"
@@ -1001,6 +1018,7 @@ printf 'unit profile:  %s\n' "$UNIT_PROFILE"
 printf 'configuration: %s/config.json\n' "$CONFIG_DIR"
 printf 'client info:   %s/client-info.json (sensitive)\n' "$CONFIG_DIR"
 printf 'control:       sudo mini-singboxctl status\n'
+printf 'TCP tuning:    sudo mini-singboxctl tune status\n'
 printf 'update:        sudo mini-singbox-update\n'
 printf 'uninstall:     sudo mini-singbox-uninstall\n'
 if [ "$HAS_SHARE_LINKS" -eq 1 ]; then

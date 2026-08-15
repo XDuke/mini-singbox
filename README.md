@@ -20,6 +20,8 @@
 - 自动生成三种标准分享链接、PNG 二维码和终端二维码；
 - 只下载当前精确版本的 CI 静态二进制，不在小虚拟机编译；
 - 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
+- 部署后离线检测内核、cgroup 有效内存和 TCP 能力，只应用可验证、可持久化、可回滚的
+  安全核心调优；
 - systemd/OpenRC 专用非 root 用户，默认 `GOMAXPROCS=1`、`GOMEMLIMIT=48MiB`、
   `GOGC=70`。
 
@@ -82,9 +84,10 @@ sudo ./scripts/deploy.sh
 6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
 7. 生成安全凭据、证书、分享链接和二维码；
 8. 安装非 root 服务并检查配置、监听端口和启动状态；
-9. 为已有安装创建可回滚备份。
+9. 为 Reality/AnyTLS 自动执行保守的 TCP 检测、计划、应用和回读验证；
+10. 为已有安装和 TCP 调优分别保留精确回滚状态。
 
-脚本不会修改云平台安全组、防火墙或 NAT 映射。
+脚本不会修改云平台安全组、防火墙、NAT 映射、内核版本、路由、RPS/RFS 或流量整形。
 
 ## 共享 NAT 部署
 
@@ -120,6 +123,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 只启用 Hysteria2 | `MINI_SINGBOX_PROTOCOLS=hy2` |
 | 只启用 AnyTLS | `MINI_SINGBOX_PROTOCOLS=anytls` |
 | Reality + AnyTLS | `MINI_SINGBOX_PROTOCOLS=reality,anytls` |
+| 关闭部署后 TCP 调优 | `MINI_SINGBOX_AUTO_TUNE=0` |
 
 例如重新生成全部凭据：
 
@@ -162,6 +166,7 @@ mini-singbox 与 `sing_box_version`。
 | `MINI_SINGBOX_REALITY_CANDIDATES` | 内置四个域名 | 最多 12 个候选域名 |
 | `MINI_SINGBOX_TLS_SAN` | 公网地址 | HY2/AnyTLS 证书 SAN |
 | `MINI_SINGBOX_AUTO_DETECT` | `1` | `0` 关闭公网地址和目标探测 |
+| `MINI_SINGBOX_AUTO_TUNE` | `1` | `0` 关闭部署后的保守 TCP 调优 |
 | `MINI_SINGBOX_REGENERATE` | `0` | `1` 备份并重新生成配置 |
 | `MINI_SINGBOX_REFRESH_DELIVERY` | `0` | `1` 保留凭据刷新交付文件 |
 | `MINI_SINGBOX_RELEASE_TAG` | 当前源码标签 | 高级用途；仍校验完整提交 |
@@ -196,6 +201,13 @@ GitHub。当前 `v1.0.0` 尚未包含后两个快捷命令，升级时重跑上�
 | `sudo mini-singboxctl qr anytls` | AnyTLS 二维码及其协议链接 |
 | `sudo mini-singboxctl qr all` | 依次显示全部启用协议二维码和链接 |
 | `sudo mini-singboxctl logs 100` | 最近 100 行服务状态和日志 |
+| `sudo mini-singboxctl tune detect` | 只检测环境、有效 RAM、工作负载和系统能力 |
+| `sudo mini-singboxctl tune plan` | 生成逐项 TCP 调优计划，不修改系统 |
+| `sudo mini-singboxctl tune apply --dry-run` | 显示自动应用内容，不写系统 |
+| `sudo mini-singboxctl tune apply` | 应用高置信度安全项并立即回读验证 |
+| `sudo mini-singboxctl tune verify` | 检查运行值、持久化文件和所有权漂移 |
+| `sudo mini-singboxctl tune status` | 同时显示环境、当前计划和管理状态 |
+| `sudo mini-singboxctl tune rollback` | 精确恢复应用前原值并移除本项目持久化文件 |
 | `sudo mini-singboxctl version` | 二进制版本和构建身份 |
 
 二维码及其下方链接包含完整客户端凭据，不要截图或复制到公开聊天、Issue 或日志。
@@ -216,6 +228,37 @@ sudo rc-service mini-singbox status
 sudo rc-service mini-singbox restart
 ```
 
+## 部署后自动 TCP 调优
+
+自动调优严格区分协议：Reality 和 AnyTLS 是 TCP 工作负载；Hysteria2 是 UDP/QUIC，
+不会被宣传为受到 BBR 或 TCP sysctl 优化。若只启用 Hysteria2，TCP 计划全部跳过。
+
+默认自动应用范围只有：
+
+- 内核已经在 `tcp_available_congestion_control` 注册 `bbr` 时，选择 `bbr`；
+- 能从已加载模块或内核 built-in 配置证明 `fq` 已可用且 sysctl 可写时，将 `fq` 设为
+  后续新建 qdisc 的默认值；不会加载模块或用 `tc` 替换当前网卡已有 qdisc；
+- 将 `tcp_mtu_probing` 设为 `1`，仅在检测到 TCP PMTU 黑洞后启用探测。
+
+`tcp_slow_start_after_idle` 默认保持原值。第一轮不修改 TCP/UDP buffer、`tcp_mem`、
+RPS/RFS、`initcwnd`、ECN、路由、MTU/MSS、`tc` 或防火墙，不加载模块，不更换内核，
+也不访问测速站、公共 DNS 或项目服务器。cgroup v1/v2 限制会参与有效内存和风险级别
+判断，但本轮不会据此扩大 socket buffer。
+
+任何写入前都会在 root 专属的 `/var/lib/mini-singbox/tune/` 保存前置基线；持久化只写入
+`/etc/sysctl.d/90-mini-singbox-tune.conf`。应用失败会恢复已改变的值。回滚只恢复仍等于
+mini-singbox 写入值的参数；如果管理员或服务商后来改过它，工具报告漂移并拒绝覆盖。
+卸载程序会先完成调优回滚，失败时保留程序供人工处理。
+
+已知套餐带宽和常见 RTT 时可以生成仅供观察的 BDP：
+
+```sh
+sudo mini-singboxctl tune plan --bw 500 --rtt 80
+```
+
+该 BDP 不会自动转换为 buffer 参数。完整设计、安全边界和故障处理见
+[TCP 调优说明](docs/tcp-tuning.md)。
+
 ## 配置、二维码与备份
 
 | 路径 | 权限 | 内容 |
@@ -228,6 +271,8 @@ sudo rc-service mini-singbox restart
 | `/etc/mini-singbox/tls.crt` | `0644` | 365 天自签名证书 |
 | `/etc/mini-singbox/share-*.txt` | `0600` | 各协议分享链接 |
 | `/etc/mini-singbox/share-*.png` | `0600` | 各协议二维码 |
+| `/var/lib/mini-singbox/tune/` | `0700` | root 专属调优基线、活动状态和历史回滚记录 |
+| `/etc/sysctl.d/90-mini-singbox-tune.conf` | `0644` | 仅含本项目实际拥有的 TCP sysctl |
 | `/var/backups/mini-singbox/` | `0700` | 部署前回滚备份 |
 
 ## 资源边界
@@ -341,7 +386,9 @@ sudo env PURGE=1 mini-singbox-uninstall
 # 当前 v1.0.0：sudo env PURGE=1 ./mini-singbox-v1.0.0/scripts/uninstall.sh
 ```
 
-`PURGE=1` 不可由卸载脚本恢复；如仍需旧客户端，应先备份 `/etc/mini-singbox`。
+卸载会先恢复 mini-singbox 管理的 TCP 参数，再删除程序。`PURGE=1` 不可由卸载脚本
+恢复；如仍需旧客户端或调优审计记录，应先备份 `/etc/mini-singbox` 和
+`/var/lib/mini-singbox`。
 
 ## 安全边界与许可
 

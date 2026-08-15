@@ -10,6 +10,10 @@ Semantic Versioning.
 - Short `bootstrap.sh` entry that resolves the latest stable mini-singbox release,
   verifies an exact annotated tag, and reuses the signed deployment chain.
 - Signed on-demand `mini-singbox-update` and `mini-singbox-uninstall` commands.
+- Offline, protocol-aware `mini-singbox tune` detection, planning, dry-run,
+  transactional apply, verification, status, and ownership-safe rollback.
+- Deployment-time safe-core TCP tuning with cgroup v1/v2 effective-memory
+  detection and an explicit `MINI_SINGBOX_AUTO_TUNE=0` opt-out.
 - Weekly Dependabot tracking limited to the official sing-box Go module; updates
   still require review, CI, and a new immutable mini-singbox release.
 
@@ -18,6 +22,8 @@ Semantic Versioning.
 - Updated the embedded official sing-box module from v1.13.16 to v1.13.18.
 - Re-running the bootstrap or update command preserves existing credentials and
   rollback state unless regeneration is explicitly requested.
+- Hysteria2 remains explicitly outside TCP tuning; automatic tuning does not
+  change buffers, RPS/RFS, routes, firewall, kernel, modules, or traffic shaping.
 
 ### Security
 

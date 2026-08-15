@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,37 @@ func TestVersion(t *testing.T) {
 		if !strings.Contains(stdout.String(), expected) {
 			t.Fatalf("version output missing %q: %s", expected, stdout.String())
 		}
+	}
+}
+
+func TestTunePlanIsOfflineAndProtocolAware(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"schema_version":1,"hysteria2":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := execute([]string{"tune", "plan", "-c", configPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute(tune plan) = %d, stderr = %s", code, stderr.String())
+	}
+	for _, expected := range []string{
+		"Hysteria2      : enabled (UDP/QUIC, observe only)",
+		"Bandwidth      : unknown (no active speed test performed)",
+		"[SKIP       ] net.ipv4.tcp_mtu_probing",
+	} {
+		if !strings.Contains(stdout.String(), expected) {
+			t.Fatalf("tune plan output missing %q:\n%s", expected, stdout.String())
+		}
+	}
+}
+
+func TestTuneRejectsPartialBDPInput(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := execute([]string{"tune", "plan", "--bw", "500"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("execute(tune plan --bw) = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "--bw and --rtt must be supplied together") {
+		t.Fatalf("unexpected stderr: %s", stderr.String())
 	}
 }
 

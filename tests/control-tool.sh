@@ -91,6 +91,7 @@ run_control() {
 	env \
 		MINI_SINGBOX_BINARY="$BINARY" \
 		MINI_SINGBOX_CONFIG_DIR="$CONFIG_DIRECTORY" \
+		MINI_SINGBOX_TUNE_STATE_DIR="$WORK_DIRECTORY/tune" \
 		MINI_SINGBOX_SERVICE_USER=mini-singbox-control-test-user \
 		MINI_SINGBOX_SYSTEMCTL="$FAKE_SYSTEMCTL" \
 		MINI_SINGBOX_SS="$FAKE_SS" \
@@ -114,6 +115,8 @@ grep -Fq 'Hysteria2 public: udp/25421' "$WORK_DIRECTORY/status.txt"
 grep -Fq 'AnyTLS:      tcp/20003, listening' "$WORK_DIRECTORY/status.txt"
 grep -Fq 'AnyTLS public: tcp/36279' "$WORK_DIRECTORY/status.txt"
 run_control logs 7 | grep -Fq 'mock service log'
+run_control tune plan | grep -Fq 'Plan'
+run_control tune apply --dry-run | grep -Fq 'Result: dry run; no system state changed'
 run_control qr all > "$WORK_DIRECTORY/qr-all.txt"
 [ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-all.txt")" -eq 3 ]
 [ "$(grep -Fc 'link (sensitive): ' "$WORK_DIRECTORY/qr-all.txt")" -eq 3 ]
@@ -150,4 +153,4 @@ if run_control qr invalid >/dev/null 2>&1; then
 	exit 1
 fi
 
-echo 'control tool and IPv6 delivery checks passed'
+echo 'control tool, offline tune plan, and IPv6 delivery checks passed'

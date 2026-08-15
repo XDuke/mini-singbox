@@ -88,7 +88,7 @@ jobs:
       - name: Shell static analysis
         run: |
           shellcheck --shell bash bootstrap.sh tests/bootstrap.sh
-          shellcheck --shell sh scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh
+          shellcheck --shell sh scripts/install.sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh tests/no-egress.sh
       - name: Stable bootstrap guardrails
         run: tests/bootstrap.sh
       - name: On-demand control-plane guardrails
@@ -175,6 +175,10 @@ jobs:
             --security-opt no-new-privileges --pids-limit 64 --memory 128m \
             -v "$PWD/generated:/etc/mini-singbox:ro" mini-singbox:ci \
             check -c /etc/mini-singbox/config.json
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 64 --memory 128m \
+            -v "$PWD/generated:/etc/mini-singbox:ro" mini-singbox:ci \
+            tune plan -c /etc/mini-singbox/config.json | grep -Fq 'Hysteria2      : enabled (UDP/QUIC, observe only)'
       - name: Unprivileged idle start and stop
         run: |
           container_id=$(docker run -d --network none --read-only --cap-drop ALL \

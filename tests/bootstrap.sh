@@ -38,11 +38,15 @@ grep -Fq -- "--proto '=https'" bootstrap.sh
 grep -Fq "refs/tags/\$version" bootstrap.sh
 grep -Fq "cat-file -t \"\$tag_ref\"" bootstrap.sh
 grep -Fq "MINI_SINGBOX_RELEASE_TAG=\$version" bootstrap.sh
+grep -Fq 'MINI_SINGBOX_AUTO_TUNE' bootstrap.sh
 grep -Fq 'status --porcelain' bootstrap.sh
 grep -Fq "verify_signed_checkout_file \"\$UPDATE_SOURCE\" bootstrap.sh" scripts/deploy.sh
 grep -Fq "verify_signed_checkout_file \"\$UNINSTALL_SOURCE\" scripts/uninstall.sh" scripts/deploy.sh
 grep -Fq "install -m 0755 \"\$UPDATE_SOURCE\" \"\$UPDATE_PATH\"" scripts/deploy.sh
 grep -Fq "install -m 0755 \"\$UNINSTALL_SOURCE\" \"\$UNINSTALL_PATH\"" scripts/deploy.sh
+grep -Fq "tune apply -c \"\$CONFIG_DIR/config.json\"" scripts/deploy.sh
+grep -Fq '/usr/local/bin/mini-singbox tune rollback' scripts/uninstall.sh
+grep -Fq -- '--state-dir /var/lib/mini-singbox/tune' scripts/deploy.sh
 if [[ "$(grep -c '^            bootstrap\.sh$' .github/workflows/release.yml)" -ne 2 ]]; then
 	printf 'bootstrap must be signed and staged exactly once per release list\n' >&2
 	exit 1

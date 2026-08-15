@@ -14,7 +14,8 @@ tests/control-tool.sh scripts/mini-singboxctl ./mini-singbox-linux-amd64
 
 This offline check generates a three-protocol IPv6 client configuration and
 verifies bracketed IPv6 share URIs plus the on-demand `check`, `version`,
-`certificate`, `status`, `logs`, and QR paths with mocked init and socket state.
+`certificate`, `status`, `logs`, offline tuning plan/dry-run, and QR paths with
+mocked init and socket state.
 
 ## No active egress
 
@@ -23,6 +24,9 @@ Build the static binary, install `iproute2`, `tcpdump`, and `strace`, then run:
 ```sh
 sudo tests/no-egress.sh ./mini-singbox evidence/no-egress 600
 ```
+
+The isolated-namespace run also traces `tune plan` for every protocol set and
+fails if detection or planning attempts a network operation.
 
 The script creates a network namespace with only loopback, captures all
 packets, traces network syscalls, and runs `version`, `generate`, `check`, and

@@ -56,8 +56,11 @@ for protocols in reality hy2 anytls reality,hy2,anytls; do
 	ip netns exec "$namespace" strace -f -qq -e trace=network -o "$output/generate.strace" \
 		"$BINARY" generate --output "$output" --protocols "$protocols" --listen 127.0.0.1 $extra >"$output/generate.log"
 	ip netns exec "$namespace" strace -f -qq -e trace=network -o "$output/check.strace" "$BINARY" check -c "$output/config.json" >"$output/check.log"
-	if grep -E 'connect\(|sendto\(|sendmsg\(|bind\(|listen\(' "$output/generate.strace" "$output/check.strace"; then
-		fail "$protocols generate or check performed a forbidden network operation"
+	ip netns exec "$namespace" strace -f -qq -e trace=network -o "$output/tune-plan.strace" \
+		"$BINARY" tune plan -c "$output/config.json" >"$output/tune-plan.log"
+	if grep -E 'connect\(|sendto\(|sendmsg\(|bind\(|listen\(' \
+		"$output/generate.strace" "$output/check.strace" "$output/tune-plan.strace"; then
+		fail "$protocols generate, check, or tune plan performed a forbidden network operation"
 	fi
 done
 
@@ -88,5 +91,5 @@ capture_pid=""
 packet_count="$(tcpdump -n -r "$work_directory/idle.pcap" 2>/dev/null | wc -l | awk '{print $1}')"
 [ "$packet_count" -eq 0 ] || fail "captured $packet_count packets in the isolated namespace"
 
-echo "no-egress PASS: version, generate, check, and four idle protocol sets; duration=${DURATION}s each; packets=0"
+echo "no-egress PASS: version, generate, check, tune plan, and four idle protocol sets; duration=${DURATION}s each; packets=0"
 echo "Evidence is retained in $work_directory; generated test credentials must not be published."

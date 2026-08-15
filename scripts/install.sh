@@ -7,6 +7,7 @@ PUBLIC_KEY_FILE="${MINI_SINGBOX_MINISIGN_PUBKEY_FILE:-}"
 INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/mini-singbox"
 SERVICE_USER="mini-singbox"
+AUTO_TUNE="${MINI_SINGBOX_AUTO_TUNE:-1}"
 
 fail() {
 	echo "mini-singbox installer: $*" >&2
@@ -18,6 +19,10 @@ fail() {
 echo "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$' || fail "invalid exact version: $VERSION"
 [ -n "$PUBLIC_KEY_FILE" ] || fail "set MINI_SINGBOX_MINISIGN_PUBKEY_FILE to the pinned official release public key"
 [ -f "$PUBLIC_KEY_FILE" ] || fail "minisign public key file not found: $PUBLIC_KEY_FILE"
+case "$AUTO_TUNE" in
+	0|1) ;;
+	*) fail "MINI_SINGBOX_AUTO_TUNE must be 0 or 1" ;;
+esac
 
 case "$(uname -m)" in
 	x86_64|amd64) ARCH="amd64" ;;
@@ -142,9 +147,18 @@ else
 	fail "neither systemd nor OpenRC was detected"
 fi
 
+if [ "$AUTO_TUNE" -eq 1 ]; then
+	if ! "$INSTALL_DIR/mini-singbox" tune apply -c "$CONFIG_DIR/config.json" --state-dir /var/lib/mini-singbox/tune; then
+		echo "mini-singbox installer: automatic TCP tuning was skipped or recovered after an error" >&2
+	elif ! "$INSTALL_DIR/mini-singbox" tune verify -c "$CONFIG_DIR/config.json" --state-dir /var/lib/mini-singbox/tune; then
+		echo "mini-singbox installer: TCP tuning verification reported drift" >&2
+	fi
+fi
+
 echo "installed mini-singbox $VERSION"
 echo "configuration: $CONFIG_DIR/config.json"
 echo "client information: $CONFIG_DIR/client-info.json"
 echo "control: sudo mini-singboxctl status"
+echo "TCP tuning: sudo mini-singboxctl tune status"
 echo "update: sudo mini-singbox-update"
 echo "uninstall: sudo mini-singbox-uninstall"

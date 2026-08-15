@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/XDuke/mini-singbox/internal/app"
+	"github.com/XDuke/mini-singbox/internal/tune"
 	versioninfo "github.com/XDuke/mini-singbox/internal/version"
 )
 
@@ -49,6 +50,8 @@ func execute(args []string, stdout, stderr io.Writer) int {
 		return executeGenerate(args[1:], stdout, stderr)
 	case "deliver":
 		return executeDeliver(args[1:], stdout, stderr)
+	case "tune":
+		return executeTune(args[1:], stdout, stderr)
 	case "version":
 		if len(args) != 1 {
 			fmt.Fprintln(stderr, "version: unexpected arguments")
@@ -77,7 +80,126 @@ func parseConfigFlag(command string, args []string, stderr io.Writer) (string, b
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: mini-singbox <run|check|generate|deliver|version> [options]")
+	fmt.Fprintln(writer, "usage: mini-singbox <run|check|generate|deliver|tune|version> [options]")
+}
+
+func executeTune(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printTuneUsage(stderr)
+		return 2
+	}
+	command := args[0]
+	flags := flag.NewFlagSet("tune "+command, flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("c", tune.DefaultConfigPath, "path to mini-singbox config")
+	stateDirectory := flags.String("state-dir", tune.DefaultStateDirectory, "tuning state directory")
+	bandwidth := flags.Uint64("bw", 0, "known line rate in Mbps (no speed test is performed)")
+	rtt := flags.Uint64("rtt", 0, "known round-trip time in milliseconds (no ping is performed)")
+	dryRun := flags.Bool("dry-run", false, "show actions without modifying the system")
+	if err := flags.Parse(args[1:]); err != nil || flags.NArg() != 0 {
+		if flags.NArg() != 0 {
+			fmt.Fprintf(stderr, "tune %s: unexpected arguments\n", command)
+		}
+		return 2
+	}
+	if (*bandwidth == 0) != (*rtt == 0) {
+		fmt.Fprintln(stderr, "tune: --bw and --rtt must be supplied together")
+		return 2
+	}
+	if command != "apply" && *dryRun {
+		fmt.Fprintln(stderr, "tune: --dry-run is valid only with apply")
+		return 2
+	}
+	if command != "plan" && command != "apply" && (*bandwidth != 0 || *rtt != 0) {
+		fmt.Fprintln(stderr, "tune: --bw and --rtt are valid only with plan or apply")
+		return 2
+	}
+	manager := tune.New(tune.Options{
+		ConfigPath: *configPath, StateDirectory: *stateDirectory, ProgramVersion: versioninfo.Version,
+	})
+	inputs := tune.Inputs{BandwidthMbps: *bandwidth, RTTMillis: *rtt}
+	switch command {
+	case "detect":
+		profile, err := manager.Detect()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintProfile(stdout, profile)
+	case "plan":
+		plan, err := manager.Plan(inputs)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintPlan(stdout, plan)
+	case "apply":
+		result, err := manager.Apply(inputs, *dryRun)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintPlan(stdout, result.Plan)
+		if result.DryRun {
+			fmt.Fprintln(stdout, "Result: dry run; no system state changed")
+			return 0
+		}
+		if len(result.Changed) == 0 {
+			fmt.Fprintln(stdout, "Result: no safe changes were required or supported")
+		} else {
+			fmt.Fprintf(stdout, "Result: applied and verified %d sysctl change(s)\n", len(result.Changed))
+		}
+	case "verify":
+		result, err := manager.Verify()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintVerification(stdout, result)
+		if len(result.Drift) != 0 {
+			return 1
+		}
+	case "status":
+		plan, err := manager.Plan(tune.Inputs{})
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintPlan(stdout, plan)
+		result, err := manager.Verify()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		tune.PrintVerification(stdout, result)
+		if len(result.Drift) != 0 {
+			return 1
+		}
+	case "rollback":
+		restored, err := manager.Rollback()
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if len(restored) == 0 {
+			fmt.Fprintln(stdout, "Result: no active mini-singbox tuning to rollback")
+		} else {
+			fmt.Fprintf(stdout, "Result: restored %d sysctl value(s) and removed managed persistence\n", len(restored))
+		}
+	case "help", "-h", "--help":
+		printTuneUsage(stdout)
+	default:
+		fmt.Fprintf(stderr, "unknown tune command %q\n", command)
+		printTuneUsage(stderr)
+		return 2
+	}
+	return 0
+}
+
+func printTuneUsage(writer io.Writer) {
+	fmt.Fprintln(writer, "usage: mini-singbox tune <detect|plan|apply|verify|status|rollback> [options]")
+	fmt.Fprintln(writer, "       tune plan|apply [--bw Mbps --rtt ms]")
+	fmt.Fprintln(writer, "       tune apply [--dry-run]")
 }
 
 func executeGenerate(args []string, stdout, stderr io.Writer) int {

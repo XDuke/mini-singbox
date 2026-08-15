@@ -148,6 +148,7 @@ jobs:
             MIGRATION.md
             docs/release.md
             docs/nat-vps.md
+            docs/tcp-tuning.md
             docs/v1.0.0-readiness.md
             docs/validation.md
             examples/config.json
@@ -200,6 +201,7 @@ jobs:
             MIGRATION.md
             docs/release.md
             docs/nat-vps.md
+            docs/tcp-tuning.md
             docs/v1.0.0-readiness.md
             docs/validation.md
             examples/config.json

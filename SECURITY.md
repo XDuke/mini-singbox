@@ -32,6 +32,14 @@ VM deployment uses the network only to download an exact official release,
 detect a requested public address, and select a Reality target when automatic
 detection is enabled. Those operations occur before the daemon starts.
 
+The post-deployment TCP tuner is offline. It does not measure against a public
+peer, download a kernel/module, or change firewall, DNS, routes, RPS, buffers,
+or traffic shaping. It writes only high-confidence sysctls that the running
+kernel and current namespace expose. Original values are captured before the
+first write, applied values are read back, and the dedicated sysctl file is
+protected by an ownership hash. Rollback refuses to overwrite later external
+changes. Set `MINI_SINGBOX_AUTO_TUNE=0` to disable deployment-time tuning.
+
 `client-info.json`, private keys, sharing links, and QR images are credentials.
 `mini-singboxctl qr` is an explicit local disclosure command and warns before
 rendering them. Do not capture its output in public logs.
