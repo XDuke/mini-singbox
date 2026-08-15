@@ -20,6 +20,8 @@ Semantic Versioning.
 ### Changed
 
 - Updated the embedded official sing-box module from v1.13.16 to v1.13.18.
+- Updated the pinned build toolchain from Go 1.26.5 to Go 1.26.6 for standard
+  library security fixes.
 - Re-running the bootstrap or update command preserves existing credentials and
   rollback state unless regeneration is explicitly requested.
 - Hysteria2 remains explicitly outside TCP tuning; automatic tuning does not

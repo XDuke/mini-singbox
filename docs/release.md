@@ -5,10 +5,10 @@ are immutable; a failed release must use a new version after correction.
 
 ## Candidate verification
 
-Use Go 1.26.5 on Linux and a clean tree:
+Use Go 1.26.6 on Linux and a clean tree:
 
 ```sh
-test "$(go env GOVERSION)" = go1.26.5
+test "$(go env GOVERSION)" = go1.26.6
 test -z "$(git status --porcelain)"
 test -z "$(gofmt -l .)"
 bash -n bootstrap.sh tests/bootstrap.sh
