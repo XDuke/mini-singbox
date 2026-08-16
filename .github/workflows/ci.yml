@@ -172,8 +172,8 @@ jobs:
           test "$(sudo stat -c '%a' generated/share-hysteria2.txt)" = 600
           test "$(sudo stat -c '%a' generated/client-anytls-sing-box-outbound.json)" = 600
           test ! -e generated/share-anytls.txt
-          jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' generated/client-anytls-sing-box-outbound.json
-          test -z "$(grep -F '"insecure"' generated/client-anytls-sing-box-outbound.json || true)"
+          sudo jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' generated/client-anytls-sing-box-outbound.json
+          test -z "$(sudo grep -F '"insecure"' generated/client-anytls-sing-box-outbound.json || true)"
           docker run --rm --network none --read-only --cap-drop ALL \
             --security-opt no-new-privileges --pids-limit 64 --memory 128m \
             -v "$PWD/generated:/etc/mini-singbox:ro" mini-singbox:ci \
