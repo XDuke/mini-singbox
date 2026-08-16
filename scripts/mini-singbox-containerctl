@@ -144,8 +144,12 @@ common_security_args() {
 }
 
 require_config() {
-	[ -f "$CONFIG_DIR/config.json" ] && [ ! -L "$CONFIG_DIR/config.json" ] || fail "configuration is missing; run '$PROGRAM init' first"
-	[ -f "$CONFIG_DIR/client-info.json" ] && [ ! -L "$CONFIG_DIR/client-info.json" ] || fail "client information is missing"
+	if [ ! -f "$CONFIG_DIR/config.json" ] || [ -L "$CONFIG_DIR/config.json" ]; then
+		fail "configuration is missing; run '$PROGRAM init' first"
+	fi
+	if [ ! -f "$CONFIG_DIR/client-info.json" ] || [ -L "$CONFIG_DIR/client-info.json" ]; then
+		fail "client information is missing"
+	fi
 }
 
 read_port() {
@@ -260,7 +264,9 @@ show_status() {
 show_logs() {
 	lines="${1:-100}"
 	case "$lines" in ''|*[!0-9]*) fail "log line count must be 1-1000" ;; esac
-	[ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || fail "log line count must be 1-1000"
+	if [ "$lines" -lt 1 ] || [ "$lines" -gt 1000 ]; then
+		fail "log line count must be 1-1000"
+	fi
 	container_exists || fail "container does not exist"
 	"$ENGINE" logs --tail "$lines" "$CONTAINER_NAME"
 }
@@ -276,7 +282,12 @@ show_qr() {
 		name="${item%%:*}"; rest="${item#*:}"; file="${rest%%:*}"; scheme="${rest#*:}"
 		[ "$protocol" = all ] || [ "$protocol" = "$name" ] || continue
 		path="$CONFIG_DIR/$file.txt"
-		[ -f "$path" ] && [ ! -L "$path" ] || { [ "$protocol" = all ] && continue; fail "$name share link is unavailable"; }
+		if [ ! -f "$path" ] || [ -L "$path" ]; then
+			if [ "$protocol" = all ]; then
+				continue
+			fi
+			fail "$name share link is unavailable"
+		fi
 		link="$(sed -n '1p' "$path")"
 		case "$link" in "$scheme"://* ) ;; *) fail "invalid $name sharing link" ;; esac
 		printf '\n%s\n' "$name"
@@ -321,7 +332,9 @@ switch_image() {
 }
 
 rollback_image() {
-	[ -f "$PREVIOUS_IMAGE_FILE" ] && [ ! -L "$PREVIOUS_IMAGE_FILE" ] || fail "no rollback image is recorded"
+	if [ ! -f "$PREVIOUS_IMAGE_FILE" ] || [ -L "$PREVIOUS_IMAGE_FILE" ]; then
+		fail "no rollback image is recorded"
+	fi
 	previous="$(sed -n '1p' "$PREVIOUS_IMAGE_FILE")"
 	[ -n "$previous" ] || fail "recorded rollback image is empty"
 	switch_image "$previous"
@@ -416,7 +429,11 @@ case "$command" in
 	qr) [ "$#" -le 2 ] || fail "qr accepts at most one protocol"; show_qr "${2:-all}" ;;
 	upgrade) [ "$#" -eq 2 ] || fail "upgrade requires exactly one image reference"; switch_image "$2" ;;
 	rollback) [ "$#" -eq 1 ] || fail "rollback accepts no arguments"; rollback_image ;;
-	certificate) [ "$#" -eq 2 ] && [ "$2" = renew ] || fail "certificate accepts only renew"; renew_certificate ;;
+	certificate)
+		[ "$#" -eq 2 ] || fail "certificate accepts only renew"
+		[ "$2" = renew ] || fail "certificate accepts only renew"
+		renew_certificate
+		;;
 	uninstall)
 		[ "$#" -eq 1 ] || fail "uninstall accepts no arguments"
 		stop_and_remove

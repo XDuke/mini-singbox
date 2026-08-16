@@ -126,7 +126,9 @@ verify_manifest_file() {
 	manifest="$1"
 	file="$2"
 	asset="$3"
-	[ -f "$file" ] && [ ! -L "$file" ] || fail "downloaded asset is missing or unsafe: $asset"
+	if [ ! -f "$file" ] || [ -L "$file" ]; then
+		fail "downloaded asset is missing or unsafe: $asset"
+	fi
 	expected="$(manifest_sha "$manifest" "$asset")"
 	printf '%s\n' "$expected" | grep -Eq '^[0-9a-f]{64}$' || \
 		fail "checksum manifest does not contain exactly one valid SHA-256 for $asset"

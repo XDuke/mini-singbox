@@ -24,10 +24,10 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-[ -n "$output" ] && [ -n "$url" ] || {
+if [ -z "$output" ] || [ -z "$url" ]; then
 	echo 'fake release curl: expected --output PATH and an HTTPS URL' >&2
 	exit 2
-}
+fi
 
 case "$url" in
 	*/mini-singbox-linux-amd64|*/mini-singbox-linux-arm64)

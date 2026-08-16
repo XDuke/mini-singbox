@@ -118,7 +118,9 @@ detect_runtime() {
 }
 
 external_pid() {
-	[ -f "$EXTERNAL_PID_FILE" ] && [ ! -L "$EXTERNAL_PID_FILE" ] || return 1
+	if [ ! -f "$EXTERNAL_PID_FILE" ] || [ -L "$EXTERNAL_PID_FILE" ]; then
+		return 1
+	fi
 	pid="$(cat "$EXTERNAL_PID_FILE" 2>/dev/null || true)"
 	case "$pid" in ''|*[!0-9]*|0) return 1 ;; esac
 	kill -0 "$pid" 2>/dev/null || return 1

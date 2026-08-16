@@ -61,7 +61,9 @@ detect_runtime() {
 }
 
 external_pid() {
-	[ -f "$EXTERNAL_PID_FILE" ] && [ ! -L "$EXTERNAL_PID_FILE" ] || return 1
+	if [ ! -f "$EXTERNAL_PID_FILE" ] || [ -L "$EXTERNAL_PID_FILE" ]; then
+		return 1
+	fi
 	pid="$(cat "$EXTERNAL_PID_FILE" 2>/dev/null || true)"
 	case "$pid" in ''|*[!0-9]*|0) return 1 ;; esac
 	kill -0 "$pid" 2>/dev/null || return 1
@@ -135,7 +137,9 @@ runtime_disable() {
 }
 
 runtime_reload() {
-	[ "$RUNTIME" = systemd ] && systemctl daemon-reload >/dev/null 2>&1 || true
+	if [ "$RUNTIME" = systemd ]; then
+		systemctl daemon-reload >/dev/null 2>&1 || true
+	fi
 }
 
 runtime_recent_logs() {
@@ -192,8 +196,15 @@ prune_managed_backups() {
 [ "$(uname -s)" = "Linux" ] || fail "this deployer supports Linux only"
 RUNTIME="$(detect_runtime)"
 case "$RUNTIME" in
-	systemd) command_exists systemctl && [ -d /run/systemd/system ] || fail "systemd runtime was selected but is not running" ;;
-	openrc) command_exists rc-service && command_exists rc-update && [ -d /run/openrc ] || fail "OpenRC runtime was selected but OpenRC is not running" ;;
+	systemd)
+		command_exists systemctl || fail "systemd runtime was selected but systemctl is unavailable"
+		[ -d /run/systemd/system ] || fail "systemd runtime was selected but is not running"
+		;;
+	openrc)
+		command_exists rc-service || fail "OpenRC runtime was selected but rc-service is unavailable"
+		command_exists rc-update || fail "OpenRC runtime was selected but rc-update is unavailable"
+		[ -d /run/openrc ] || fail "OpenRC runtime was selected but OpenRC is not running"
+		;;
 	external) running_in_container || warn "external runtime selected outside a detected container; another supervisor must own the process" ;;
 esac
 
@@ -251,7 +262,9 @@ if [ -z "$BUNDLE_DIR" ] && [ "$SIGNED_RELEASE" -eq 1 ]; then
 		fail "release tag $RELEASE_TAG does not point at source commit $SOURCE_COMMIT"
 fi
 if [ -n "$BUNDLE_DIR" ]; then
-	[ -f "$BUNDLE_MANIFEST" ] && [ ! -L "$BUNDLE_MANIFEST" ] || fail "bundle checksum manifest is missing or unsafe"
+	if [ ! -f "$BUNDLE_MANIFEST" ] || [ -L "$BUNDLE_MANIFEST" ]; then
+		fail "bundle checksum manifest is missing or unsafe"
+	fi
 fi
 
 case "$RUNTIME" in
@@ -269,7 +282,9 @@ case "$RUNTIME" in
 	external) UNIT_SOURCE="$EXTERNAL_RUN_SOURCE"; UNIT_PATH="$EXTERNAL_RUN_PATH"; UNIT_PROFILE="external-supervisor" ;;
 esac
 for required_source in "$CONTROL_SOURCE" "$CONTAINER_CONTROL_SOURCE" "$UPDATE_SOURCE" "$UNINSTALL_SOURCE" "$UNIT_SOURCE" "$EXTERNAL_RUN_SOURCE"; do
-	[ -f "$required_source" ] && [ ! -L "$required_source" ] || fail "required deployment asset is missing or unsafe: $required_source"
+	if [ ! -f "$required_source" ] || [ -L "$required_source" ]; then
+		fail "required deployment asset is missing or unsafe: $required_source"
+	fi
 done
 
 PROTOCOLS="${MINI_SINGBOX_PROTOCOLS:-reality,hy2,anytls}"

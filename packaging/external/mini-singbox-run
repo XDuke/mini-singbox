@@ -35,8 +35,12 @@ forward_signal() {
 }
 
 [ -x "$BINARY" ] || fail "binary is not executable: $BINARY"
-[ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail "configuration is missing or unsafe: $CONFIG"
-[ -d "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ] || fail "run directory is missing or unsafe: $RUN_DIR"
+if [ ! -f "$CONFIG" ] || [ -L "$CONFIG" ]; then
+	fail "configuration is missing or unsafe: $CONFIG"
+fi
+if [ ! -d "$RUN_DIR" ] || [ -L "$RUN_DIR" ]; then
+	fail "run directory is missing or unsafe: $RUN_DIR"
+fi
 
 if [ -f "$PID_FILE" ]; then
 	previous="$(cat "$PID_FILE" 2>/dev/null || true)"
