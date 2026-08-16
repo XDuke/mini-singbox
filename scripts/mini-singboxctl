@@ -8,6 +8,7 @@ CLIENT_INFO_PATH="$CONFIG_DIR/client-info.json"
 TUNE_STATE_DIR="${MINI_SINGBOX_TUNE_STATE_DIR:-/var/lib/mini-singbox/tune}"
 SERVICE="${MINI_SINGBOX_SERVICE:-mini-singbox.service}"
 SERVICE_USER="${MINI_SINGBOX_SERVICE_USER:-mini-singbox}"
+SERVICE_GROUP="${MINI_SINGBOX_SERVICE_GROUP:-$SERVICE_USER}"
 SYSTEMCTL="${MINI_SINGBOX_SYSTEMCTL:-systemctl}"
 QRENCODE="${MINI_SINGBOX_QRENCODE:-qrencode}"
 OPENSSL="${MINI_SINGBOX_OPENSSL:-openssl}"
@@ -187,7 +188,7 @@ renew_certificate() {
 	trap 'exit 129' HUP
 	trap 'exit 130' INT
 	trap 'exit 143' TERM
-	install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$generated"
+	install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_GROUP" "$generated"
 
 	runuser -u "$SERVICE_USER" -- "$BINARY" renew-certificate \
 		-c "$CONFIG_PATH" \
@@ -200,7 +201,7 @@ renew_certificate() {
 	for qr_source in share-reality share-hysteria2 share-anytls; do
 		if [ -f "$generated/$qr_source.txt" ]; then
 			"$QRENCODE" -l M -t PNG -o "$generated/$qr_source.png" < "$generated/$qr_source.txt"
-			chown "$SERVICE_USER:$SERVICE_USER" "$generated/$qr_source.png"
+			chown "$SERVICE_USER:$SERVICE_GROUP" "$generated/$qr_source.png"
 			chmod 0600 "$generated/$qr_source.png"
 		fi
 	done
@@ -220,7 +221,7 @@ renew_certificate() {
 				tls.crt) mode=0644 ;;
 				*) mode=0600 ;;
 			esac
-			install -m "$mode" -o "$SERVICE_USER" -g "$SERVICE_USER" \
+			install -m "$mode" -o "$SERVICE_USER" -g "$SERVICE_GROUP" \
 				"$generated/$renewal_file" "$CONFIG_DIR/$renewal_file"
 		else
 			case "$renewal_file" in
