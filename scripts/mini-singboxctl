@@ -7,6 +7,7 @@ CONFIG_PATH="$CONFIG_DIR/config.json"
 CLIENT_INFO_PATH="$CONFIG_DIR/client-info.json"
 TUNE_STATE_DIR="${MINI_SINGBOX_TUNE_STATE_DIR:-/var/lib/mini-singbox/tune}"
 SERVICE="${MINI_SINGBOX_SERVICE:-mini-singbox.service}"
+OPENRC_SERVICE="${MINI_SINGBOX_OPENRC_SERVICE:-mini-singbox}"
 SERVICE_USER="${MINI_SINGBOX_SERVICE_USER:-mini-singbox}"
 SERVICE_GROUP="${MINI_SINGBOX_SERVICE_GROUP:-$SERVICE_USER}"
 SYSTEMCTL="${MINI_SINGBOX_SYSTEMCTL:-systemctl}"
@@ -14,6 +15,9 @@ QRENCODE="${MINI_SINGBOX_QRENCODE:-qrencode}"
 OPENSSL="${MINI_SINGBOX_OPENSSL:-openssl}"
 JQ="${MINI_SINGBOX_JQ:-jq}"
 SS="${MINI_SINGBOX_SS:-ss}"
+RC_SERVICE="${MINI_SINGBOX_RC_SERVICE:-rc-service}"
+LOGREAD="${MINI_SINGBOX_LOGREAD:-logread}"
+EXTERNAL_PID_FILE="${MINI_SINGBOX_EXTERNAL_PID_FILE:-/run/mini-singbox/mini-singbox.pid}"
 
 fail() {
 	printf 'mini-singboxctl: %s\n' "$*" >&2
@@ -24,18 +28,19 @@ RENEW_WORK=""
 RENEW_BACKUP=""
 RENEW_SWITCHED=0
 RENEW_COMMITTED=0
+RENEW_RUNTIME="unknown"
 
 renew_cleanup() {
 	status=$?
 	trap - EXIT HUP INT TERM
 	if [ "$RENEW_SWITCHED" -eq 1 ] && [ "$RENEW_COMMITTED" -eq 0 ]; then
 		printf 'mini-singboxctl: certificate renewal failed; restoring the previous configuration\n' >&2
-		"$SYSTEMCTL" stop "$SERVICE" >/dev/null 2>&1 || true
+		runtime_stop "$RENEW_RUNTIME" >/dev/null 2>&1 || true
 		if ! rm -rf -- "$CONFIG_DIR"; then
 			printf 'mini-singboxctl: could not remove the failed replacement configuration\n' >&2
 		elif ! cp -a "$RENEW_BACKUP" "$CONFIG_DIR"; then
 			printf 'mini-singboxctl: CRITICAL: could not restore the previous configuration from %s\n' "$RENEW_BACKUP" >&2
-		elif ! "$SYSTEMCTL" start "$SERVICE" >/dev/null 2>&1; then
+		elif [ "$RENEW_RUNTIME" != external ] && ! runtime_start "$RENEW_RUNTIME" >/dev/null 2>&1; then
 			printf 'mini-singboxctl: previous configuration was restored but the service did not restart\n' >&2
 		fi
 	fi
@@ -91,19 +96,67 @@ run_check() {
 	fi
 }
 
-detect_init() {
-	if [ "${MINI_SINGBOX_INIT_SYSTEM:-auto}" != "auto" ]; then
-		printf '%s\n' "$MINI_SINGBOX_INIT_SYSTEM"
-	elif command_available "$SYSTEMCTL" && [ -d /run/systemd/system ]; then
+detect_runtime() {
+	requested="${MINI_SINGBOX_RUNTIME:-${MINI_SINGBOX_INIT_SYSTEM:-auto}}"
+	if [ "$requested" != auto ]; then
+		case "$requested" in systemd|openrc|external|unknown) printf '%s\n' "$requested" ;; *) fail "invalid runtime override: $requested" ;; esac
+		return 0
+	fi
+	if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
+		recorded="$(awk -F= '$1 == "runtime" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		case "$recorded" in systemd|openrc|external) printf '%s\n' "$recorded"; return 0 ;; esac
+	fi
+	if command_available "$SYSTEMCTL" && [ -d /run/systemd/system ]; then
 		printf 'systemd\n'
+	elif command_available "$RC_SERVICE" && [ -d /run/openrc ]; then
+		printf 'openrc\n'
+	elif [ -x /usr/local/bin/mini-singbox-run ] || [ -f /.dockerenv ] || [ -f /run/.containerenv ]; then
+		printf 'external\n'
 	else
 		printf 'unknown\n'
 	fi
 }
 
-service_is_active() {
+external_pid() {
+	[ -f "$EXTERNAL_PID_FILE" ] && [ ! -L "$EXTERNAL_PID_FILE" ] || return 1
+	pid="$(cat "$EXTERNAL_PID_FILE" 2>/dev/null || true)"
+	case "$pid" in ''|*[!0-9]*|0) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	printf '%s\n' "$pid"
+}
+
+runtime_is_active() {
 	case "$1" in
 		systemd) "$SYSTEMCTL" is-active --quiet "$SERVICE" ;;
+		openrc) "$RC_SERVICE" "$OPENRC_SERVICE" status >/dev/null 2>&1 ;;
+		external) external_pid >/dev/null ;;
+		*) return 1 ;;
+	esac
+}
+
+runtime_pid() {
+	case "$1" in
+		systemd) "$SYSTEMCTL" show "$SERVICE" -p MainPID --value ;;
+		openrc) pgrep -o -u "$SERVICE_USER" mini-singbox 2>/dev/null || true ;;
+		external) external_pid || true ;;
+		*) return 1 ;;
+	esac
+}
+
+runtime_stop() {
+	case "$1" in
+		systemd) "$SYSTEMCTL" stop "$SERVICE" ;;
+		openrc) "$RC_SERVICE" "$OPENRC_SERVICE" stop ;;
+		external) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+runtime_start() {
+	case "$1" in
+		systemd) "$SYSTEMCTL" start "$SERVICE" ;;
+		openrc) "$RC_SERVICE" "$OPENRC_SERVICE" start ;;
+		external) return 0 ;;
 		*) return 1 ;;
 	esac
 }
@@ -150,8 +203,12 @@ show_certificate() {
 renew_certificate() {
 	require_installation
 	[ "$(id -u)" -eq 0 ] || fail "certificate renewal must run as root"
-	[ "$(detect_init)" = "systemd" ] || fail "certificate renewal requires a running systemd environment"
-	"$SYSTEMCTL" is-active --quiet "$SERVICE" || fail "service must be active before certificate renewal"
+	RENEW_RUNTIME="$(detect_runtime)"
+	case "$RENEW_RUNTIME" in
+		systemd|openrc) runtime_is_active "$RENEW_RUNTIME" || fail "service must be active before certificate renewal" ;;
+		external) runtime_is_active external && fail "stop the external supervisor before certificate renewal" ;;
+		*) fail "certificate renewal requires systemd, OpenRC, or an inactive external runtime" ;;
+	esac
 	for required in "$JQ" "$QRENCODE" runuser mktemp install cp; do
 		require_command "$required"
 	done
@@ -213,7 +270,7 @@ renew_certificate() {
 	done
 	cp -a "$CONFIG_DIR" "$RENEW_BACKUP"
 	RENEW_SWITCHED=1
-	"$SYSTEMCTL" stop "$SERVICE"
+	runtime_stop "$RENEW_RUNTIME"
 	for renewal_file in \
 		tls.crt tls.key client-info.json client-anytls-sing-box-outbound.json \
 		share-reality.txt share-hysteria2.txt share-anytls.txt \
@@ -233,14 +290,19 @@ renew_certificate() {
 		fi
 	done
 	run_check >/dev/null
-	"$SYSTEMCTL" start "$SERVICE"
-	sleep 3
-	"$SYSTEMCTL" is-active --quiet "$SERVICE" || fail "service did not remain active after certificate renewal"
+	if [ "$RENEW_RUNTIME" != external ]; then
+		runtime_start "$RENEW_RUNTIME"
+		sleep 3
+		runtime_is_active "$RENEW_RUNTIME" || fail "service did not remain active after certificate renewal"
+	fi
 	show_certificate >/dev/null
 	RENEW_COMMITTED=1
 	RENEW_SWITCHED=0
 	printf 'TLS certificate renewed; protocol credentials and Reality keys were preserved.\n'
 	printf 'Re-import Hysteria2 and AnyTLS client delivery because their certificate authentication changed.\n'
+	if [ "$RENEW_RUNTIME" = external ]; then
+		printf 'Restart the surrounding supervisor to load the renewed certificate.\n'
+	fi
 }
 
 socket_is_listening() {
@@ -292,21 +354,32 @@ show_status() {
 		STATUS_FAILURE=1
 	fi
 
-	init_system="$(detect_init)"
+	runtime="$(detect_runtime)"
 	active=0
-	if service_is_active "$init_system"; then
+	if runtime_is_active "$runtime"; then
 		active=1
-		printf 'service:      active (%s)\n' "$init_system"
+		printf 'service:      active (%s)\n' "$runtime"
 	else
-		printf 'service:      inactive or unavailable (%s)\n' "$init_system" >&2
+		printf 'service:      inactive or unavailable (%s)\n' "$runtime" >&2
 		STATUS_FAILURE=1
 	fi
-	if [ "$init_system" = "systemd" ] && [ "$active" -eq 1 ]; then
+	if [ "$runtime" = "systemd" ] && [ "$active" -eq 1 ]; then
 		pid="$($SYSTEMCTL show "$SERVICE" -p MainPID --value)"
 		memory="$($SYSTEMCTL show "$SERVICE" -p MemoryCurrent --value)"
 		tasks="$($SYSTEMCTL show "$SERVICE" -p TasksCurrent --value)"
 		memory_mib="$(awk -v bytes="$memory" 'BEGIN { if (bytes ~ /^[0-9]+$/) printf "%.1f", bytes / 1048576; else print "unknown" }')"
 		printf 'process:      PID %s, memory %s MiB, tasks %s\n' "$pid" "$memory_mib" "$tasks"
+	elif [ "$active" -eq 1 ]; then
+		pid="$(runtime_pid "$runtime")"
+		case "$pid" in
+			''|*[!0-9]*|0) printf 'process:      active, PID unavailable\n' ;;
+			*)
+				memory_kib="$(awk '/^VmRSS:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)"
+				tasks="$(awk '/^Threads:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)"
+				memory_mib="$(awk -v kib="${memory_kib:-0}" 'BEGIN { printf "%.1f", kib / 1024 }')"
+				printf 'process:      PID %s, memory %s MiB, tasks %s\n' "$pid" "$memory_mib" "${tasks:-unknown}"
+				;;
+		esac
 	fi
 
 	public_address="$($JQ -r '.public_address // "not recorded"' "$CLIENT_INFO_PATH" 2>/dev/null || printf 'not recorded')"
@@ -397,9 +470,23 @@ show_logs() {
 	if [ "$lines" -lt 1 ] || [ "$lines" -gt 1000 ]; then
 		fail "log line count must be an integer from 1 to 1000"
 	fi
-	case "$(detect_init)" in
+	case "$(detect_runtime)" in
 		systemd) exec "$SYSTEMCTL" status "$SERVICE" --no-pager --lines "$lines" ;;
-		*) fail "a running systemd environment is required" ;;
+		openrc)
+			if command_available "$LOGREAD"; then
+				log_output="$("$LOGREAD" 2>/dev/null || true)"
+				matched_logs="$(printf '%s\n' "$log_output" | grep 'mini-singbox' | tail -n "$lines" || true)"
+				if [ -n "$matched_logs" ]; then
+					printf '%s\n' "$matched_logs"
+				else
+					"$RC_SERVICE" "$OPENRC_SERVICE" status
+				fi
+			else
+				"$RC_SERVICE" "$OPENRC_SERVICE" status
+			fi
+			;;
+		external) fail "external runtime logs are owned by the surrounding supervisor" ;;
+		*) fail "no supported runtime is available" ;;
 	esac
 }
 
@@ -435,6 +522,9 @@ case "$command" in
 		[ "$#" -ge 2 ] || fail "tune requires a subcommand"
 		require_installation
 		shift
+		if [ "$(detect_runtime)" = external ] && [ "$1" = apply ]; then
+			fail "tune apply is disabled for external/container runtime; tune the host outside the container"
+		fi
 		exec "$BINARY" tune "$@" -c "$CONFIG_PATH" --state-dir "$TUNE_STATE_DIR"
 		;;
 	version)

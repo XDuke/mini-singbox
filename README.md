@@ -4,10 +4,33 @@
 [![Release](https://img.shields.io/github/v/release/XDuke/mini-singbox)](https://github.com/XDuke/mini-singbox/releases/latest)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-`mini-singbox` 是面向个人、小型 NAT VPS、LXC 和 128 MiB 容器的精简 sing-box
+`mini-singbox` 是面向个人、小型 NAT VPS、LXC、Alpine Linux 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。`v1.1.1` 内置官方 sing-box `v1.13.18`。
+自动更新守护进程。当前正式版 `v1.1.1` 与正在验收的 `v1.2.0` 候选版均内置官方
+sing-box `v1.13.18`。
+
+## v1.2.0 候选升级
+
+这一轮在不增加常驻管理面板、不提高默认 128 MiB 资源上限的前提下，补齐 Alpine 与
+OCI 容器运行链。正式标签会等 Alpine/OpenRC 与真实客户端验收后创建。
+
+- 一行安装改为“Release 资产优先”：先验证独立固定的 minisign 公钥、签名校验清单、
+  版本元数据和每个部署文件，再执行安装；`v1.1.1` 仍保留兼容回退路径；
+- 原生支持 Debian/Ubuntu `systemd` 与 Alpine `OpenRC`，两者都有非 root 用户、开机
+  自启、启动稳定性、进程身份、配置和监听端口检查；
+- 在服务商容器内自动使用 `external` 模式，只准备二进制、配置和非 root 前台入口，
+  由外层 supervisor 管理生命周期，不虚假宣称容器内自启；
+- external/OCI 内强制禁止自动写宿主 TCP sysctl；TCP 调优只能由真正拥有宿主内核的
+  systemd/OpenRC 主机执行；
+- 新增 rootless Podman/Docker 管理工具，提供 `init/up/status/logs/check/upgrade/rollback`、
+  二维码、事务续证和保留配置卸载；默认只读根文件系统、空 capabilities、128 MiB 与
+  64 PID 上限；
+- 正式版发布流程增加 `linux/amd64`、`linux/arm64` GHCR 镜像、不可变 digest、GitHub
+  provenance，以及 Alpine 3.23/3.24、OpenRC 和 rootless Podman CI 验收。
+
+Alpine、外部 supervisor 和 OCI 的边界与测试方法见
+[Alpine 与容器运行指南](docs/alpine-container.md)。
 
 ## v1.1.1 安全更新
 
@@ -66,8 +89,8 @@ Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或�
 - 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
 - 部署后离线检测内核、cgroup 有效内存和 TCP 能力，只应用可验证、可持久化、可回滚的
   安全核心调优；
-- systemd 专用非 root 用户，默认 `GOMAXPROCS=1`、`GOMEMLIMIT=48MiB`、
-  `GOGC=70`。
+- systemd/OpenRC/external/OCI 均使用非 root 进程，默认 `GOMAXPROCS=1`、
+  `GOMEMLIMIT=48MiB`、`GOGC=70`；容器模式不写宿主 sysctl。
 
 ## 协议和默认端口
 
@@ -82,16 +105,27 @@ Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。
 
 ## 一行部署
 
-推荐 Debian 12/13 或 Ubuntu 24.04 的 systemd 环境。安装和以后升级都运行同一条命令：
+支持 Debian 12/13、Ubuntu 24.04 的 systemd 环境以及 Alpine Linux 3.23/3.24 的
+OpenRC 环境。Debian/Ubuntu 安装和以后升级运行：
 
 ```bash
 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
-`bootstrap.sh` 只负责解析 GitHub 最新正式版、克隆精确标签并启动部署器。它拒绝
-预发布和轻量标签，核对官方仓库、标签提交和干净工作区，并使用入口脚本内置的独立
-minisign 公钥；`deploy.sh` 随后验证 minisign、SHA-256、ELF、版本和完整 Git 提交。
-目标虚拟机只下载静态二进制，不编译。
+Alpine 的 BusyBox `ash` 支持相同的失败传播，使用：
+
+```sh
+sh -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | sh'
+```
+
+非 root 环境会自动使用已有的 `sudo` 或 `doas`；最小 Alpine 容器两者都没有时应直接在
+root shell 中执行。
+
+`bootstrap.sh` 只负责解析 GitHub 最新正式版和验证部署资产。`v1.2.0` 起不会为正常
+安装克隆仓库：它使用入口脚本内置的独立 minisign 公钥验证签名校验清单，再逐项验证
+版本元数据、部署器、控制工具、systemd/OpenRC/external 文件；`deploy.sh` 随后验证
+SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二进制，不编译。旧的
+`v1.1.1` 固定安装仍自动使用经验证的兼容路径。
 
 普通重跑会先备份并保留 UUID、密码、Reality 私钥和证书；只有显式设置
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
@@ -121,15 +155,17 @@ sudo ./scripts/deploy.sh
 
 部署器会自动：
 
-1. 识别 amd64/arm64 和普通 VM/受限容器；
+1. 识别 amd64/arm64、systemd、OpenRC 和外部 supervisor 容器；
 2. 安装最少的运行和校验工具；
 3. 探测公网地址并优选 Reality 目标；
 4. 检查端口占用和协议端口冲突；
 5. 下载正式 Release 的静态二进制；
 6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
 7. 生成安全凭据、证书、Reality/Hysteria2 二维码和认证证书的 AnyTLS 客户端配置；
-8. 安装非 root 服务并检查配置、监听端口和启动状态；
-9. 为 Reality/AnyTLS 自动执行保守的 TCP 检测、计划、应用和回读验证；
+8. 安装非 root 服务并检查配置、进程身份、监听端口和启动状态；external 模式只准备
+   前台入口，明确交给外层 supervisor 启动；
+9. 仅在真正拥有宿主内核的 systemd/OpenRC 环境，为 Reality/AnyTLS 自动执行保守的
+   TCP 检测、计划、应用和回读验证；
 10. 为已有安装和 TCP 调优分别保留精确回滚状态。
 
 脚本不会修改云平台安全组、防火墙、NAT 映射、内核版本、路由、RPS/RFS 或流量整形。
@@ -200,6 +236,7 @@ mini-singbox 与 `sing_box_version`。
 | 变量 | 默认值 | 用途 |
 |---|---|---|
 | `MINI_SINGBOX_VERSION` | GitHub 最新正式版 | bootstrap 固定精确项目版本 |
+| `MINI_SINGBOX_RUNTIME` | `auto` | `auto`、`systemd`、`openrc` 或 `external`；通常不要手动指定 |
 | `MINI_SINGBOX_PROTOCOLS` | `reality,hy2,anytls` | 启用协议，逗号分隔 |
 | `MINI_SINGBOX_LISTEN` | `::` | 内部监听 IP 字面量 |
 | `MINI_SINGBOX_REALITY_PORT` | `20001` | Reality 内部 TCP 端口 |
@@ -236,15 +273,64 @@ MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
+## 运行模式与快捷命令
+
+安装器自动选择运行模式：真实 Debian/Ubuntu 主机使用 systemd；真实 Alpine 主机使用
+OpenRC；检测到服务商 Docker/Podman/LXC 容器时使用 external。已经部署过的目录会记录
+模式，升级时不会隐式跨模式迁移，避免在切换 init system 时丢失自启或留下双进程。
+
+| 环境 | 启动与自启所有者 | 常用命令 |
+|---|---|---|
+| systemd | `mini-singbox.service` | `sudo systemctl status/restart mini-singbox` |
+| Alpine OpenRC | `/etc/init.d/mini-singbox` | `sudo rc-service mini-singbox status/restart` |
+| 服务商容器 | 外层 supervisor | 前台命令 `/usr/local/bin/mini-singbox-run` |
+| rootless Podman/Docker | `mini-singbox-containerctl` | `init/up/status/logs/upgrade/rollback/down` |
+
+external 模式安装完成后不会偷偷后台运行。应在服务商提供的 supervisor 中把启动用户设为
+`mini-singbox`，命令设为 `/usr/local/bin/mini-singbox-run`；若 supervisor 只能以 root
+启动，入口会先通过 `runuser` 降权。停止 supervisor 后才能升级或续证。
+
+OCI 正式镜像发布到 `ghcr.io/xduke/mini-singbox`。生产使用应从 Release 的
+`oci-digests.txt` 复制完整 `镜像@sha256:...`，不要只依赖可移动的 `latest`。安装
+`mini-singbox-containerctl` 后，一套完整命令是。该工具会同时确认 Podman/Docker
+守护端确实以 rootless 模式运行；仅把普通用户加入 rootful Docker 的 `docker` 组不会通过：
+
+```sh
+export MINI_SINGBOX_IMAGE='ghcr.io/xduke/mini-singbox@sha256:REPLACE_WITH_RELEASE_DIGEST'
+export MINI_SINGBOX_PUBLIC_ADDRESS='proxy.example.com'
+export MINI_SINGBOX_REALITY_SERVER_NAME='www.example.com'
+export MINI_SINGBOX_REALITY_HANDSHAKE='www.example.com:443'
+export MINI_SINGBOX_TLS_SAN='proxy.example.com'
+
+mini-singbox-containerctl init
+mini-singbox-containerctl up
+mini-singbox-containerctl status
+mini-singbox-containerctl logs 100
+mini-singbox-containerctl qr all
+mini-singbox-containerctl check
+mini-singbox-containerctl certificate renew
+mini-singbox-containerctl upgrade 'ghcr.io/xduke/mini-singbox@sha256:NEW_DIGEST'
+mini-singbox-containerctl rollback
+mini-singbox-containerctl down
+mini-singbox-containerctl uninstall
+```
+
+`init` 绝不覆盖已有凭据；`upgrade` 会先拉取并离线检查新镜像，再切换并观察启动，失败
+恢复旧镜像；`rollback` 使用上一次升级记录的镜像 ID；`certificate renew` 先停容器、备份
+完整配置、生成和验证新证书，失败恢复原配置。容器内没有 `tune apply` 路径，宿主网络
+调优必须在宿主上单独完成。
+
 ## 运维命令
 
-`v1.1.1` 一键部署会安装三个按需工具，均不常驻、不监听端口。`mini-singboxctl`
-严格离线；只有用户显式执行 `mini-singbox-update` 时才访问 GitHub。
+主机一键部署会安装四个按需工具，均不常驻、不监听端口。`mini-singboxctl`
+严格离线；`mini-singbox-update` 只在用户显式升级时访问 GitHub，
+`mini-singbox-containerctl` 只在显式拉取/升级 OCI 镜像时访问所选镜像仓库。
 
 | 命令 | 作用 |
 |---|---|
 | `sudo mini-singbox-update` | 安装/升级到最新正式版，保留现有凭据 |
 | `sudo mini-singbox-uninstall` | 卸载服务和程序，默认保留配置与密钥 |
+| `mini-singbox-containerctl help` | 查看 rootless Podman/Docker 全部生命周期命令（不要用 sudo） |
 | `sudo mini-singboxctl status` | 检查版本、配置、服务、内存、任务、端口和证书 |
 | `sudo mini-singboxctl check` | 仅校验配置，不启动监听器 |
 | `sudo mini-singboxctl certificate` | 检查 TLS 证书到期时间 |
@@ -279,6 +365,16 @@ sudo systemctl status mini-singbox --no-pager
 sudo systemctl restart mini-singbox
 sudo journalctl -u mini-singbox -n 100 --no-pager
 sudo journalctl -u mini-singbox -f
+```
+
+Alpine OpenRC：
+
+```sh
+sudo rc-service mini-singbox status
+sudo rc-service mini-singbox restart
+sudo rc-service mini-singbox stop
+sudo rc-service mini-singbox start
+sudo rc-update show default | grep mini-singbox
 ```
 
 ## 部署后自动 TCP 调优
@@ -335,7 +431,7 @@ sudo mini-singboxctl tune plan --bw 500 --rtt 80
 
 ## 资源边界
 
-默认 systemd 服务设置：
+所有运行后端默认设置：
 
 ```text
 GOMAXPROCS=1
@@ -345,10 +441,14 @@ MemoryMax=128M
 TasksMax=64
 ```
 
+前三项由 systemd、OpenRC、external runner 和 OCI 容器共同设置。`MemoryMax` 与
+`TasksMax` 由 systemd 或 OCI runtime 强制；OpenRC/external 依赖外层主机或容器的资源
+限制，因此不能把 Go runtime 建议值表述成硬内存上限。
+
 `GOMEMLIMIT` 主要约束 Go Runtime 管理的内存，不是容器总内存硬限制，也不包含全部
 内核 Socket 内存。
 
-普通 VM 使用完整 systemd 沙箱；受限 LXC/容器会使用 container-compatible unit，保留
+普通 systemd VM 使用完整沙箱；受限 systemd LXC 会使用 container-compatible unit，保留
 非 root、空 capabilities、`NoNewPrivileges`、内存和任务上限，但依赖外层容器提供挂载
 命名空间与 seccomp 边界。两种 profile 会写入 `deployment-info.txt`，不宣称保护等价。
 
@@ -417,13 +517,16 @@ CGO_ENABLED=0 go build -tags with_utls -trimpath -o mini-singbox ./cmd/mini-sing
 
 ## Release 验证
 
-正式 Release 包含 amd64/arm64 静态二进制、`SHA256SUMS`、minisign 签名、SPDX
-SBOM、GitHub provenance、许可证、文档和安装文件。手工验证：
+`v1.2.0` 起正式 Release 包含 amd64/arm64 静态二进制、`SHA256SUMS`、minisign 签名、
+SPDX SBOM、GitHub provenance、许可证、systemd/OpenRC/external 安装文件，以及记录
+GHCR 多架构镜像不可变身份的 `oci-digests.txt`。手工验证：
 
 ```sh
 minisign -Vm SHA256SUMS -x SHA256SUMS.minisig -p release/minisign.pub
 sha256sum -c SHA256SUMS --ignore-missing
 go version -m mini-singbox-linux-amd64
+gh attestation verify \
+  "oci://$(cat oci-digests.txt)" -R XDuke/mini-singbox
 ```
 
 详见[可复现发布流程](docs/release.md)。

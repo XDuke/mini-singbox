@@ -1,0 +1,433 @@
+#!/bin/sh
+set -eu
+
+PROGRAM=mini-singbox-containerctl
+CONTAINER_NAME="${MINI_SINGBOX_CONTAINER_NAME:-mini-singbox}"
+STATE_DIR="${MINI_SINGBOX_CONTAINER_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/mini-singbox-container}"
+CONFIG_DIR="${MINI_SINGBOX_CONTAINER_CONFIG_DIR:-$STATE_DIR/config}"
+IMAGE="${MINI_SINGBOX_IMAGE:-ghcr.io/xduke/mini-singbox:latest}"
+IMAGE_FILE="$STATE_DIR/image"
+PREVIOUS_IMAGE_FILE="$STATE_DIR/previous-image"
+LOCK_DIR="$STATE_DIR/.lock"
+RENEW_ACTIVE=0
+RENEW_WORK=""
+RENEW_BACKUP=""
+RENEW_IMAGE=""
+RENEW_WAS_RUNNING=0
+
+fail() {
+	printf '%s: %s\n' "$PROGRAM" "$*" >&2
+	exit 1
+}
+
+warn() {
+	printf 'WARNING: %s\n' "$*" >&2
+}
+
+usage() {
+	cat <<'EOF'
+usage: mini-singbox-containerctl <command>
+
+  init                 generate a new local configuration
+  up                    verify and start the hardened container
+  down                  stop and remove the container; keep configuration
+  status                show image, process, configuration and port state
+  logs [LINES]          show 1-1000 recent container log lines
+  check                 validate the mounted configuration without networking
+  qr [reality|hy2|anytls|all]
+                        display enabled sharing links and terminal QR codes
+  upgrade IMAGE         pull, validate and transactionally switch the image
+  rollback              restore the image saved by the last successful upgrade
+  certificate renew     renew TLS material transactionally; preserve credentials
+  uninstall             remove the container and helper state; keep configuration
+
+Set MINI_SINGBOX_IMAGE to an immutable image digest for production.  The init
+command also accepts the same MINI_SINGBOX_* deployment variables documented by
+the project, including public address, protocol ports and Reality target.
+EOF
+}
+
+command_exists() {
+	command -v "$1" >/dev/null 2>&1
+}
+
+validate_image_reference() {
+	case "$1" in ''|*[!A-Za-z0-9_./:@+-]*) fail "invalid image reference" ;; esac
+}
+
+select_engine() {
+	if [ -n "${MINI_SINGBOX_CONTAINER_ENGINE:-}" ]; then
+		case "$MINI_SINGBOX_CONTAINER_ENGINE" in podman|docker) ENGINE="$MINI_SINGBOX_CONTAINER_ENGINE" ;; *) fail "container engine must be podman or docker" ;; esac
+	elif command_exists podman; then
+		ENGINE=podman
+	elif command_exists docker; then
+		ENGINE=docker
+	else
+		fail "Podman or Docker is required"
+	fi
+	command_exists "$ENGINE" || fail "container engine is unavailable: $ENGINE"
+}
+
+validate_state_paths() {
+	case "$STATE_DIR" in /*) ;; *) fail "state directory must be absolute: $STATE_DIR" ;; esac
+	case "$CONFIG_DIR" in /*) ;; *) fail "configuration directory must be absolute: $CONFIG_DIR" ;; esac
+	case "$STATE_DIR/" in *'/../'*|*'/./'*|*'//'*) fail "state directory contains unsafe path components: $STATE_DIR" ;; esac
+	case "$CONFIG_DIR/" in *'/../'*|*'/./'*|*'//'*) fail "configuration directory contains unsafe path components: $CONFIG_DIR" ;; esac
+	case "$STATE_DIR" in /|/etc|/usr|/var|/home|"$HOME"|'') fail "unsafe state directory: $STATE_DIR" ;; esac
+	case "$CONFIG_DIR" in "$STATE_DIR"/*) ;; *) fail "configuration directory must be inside $STATE_DIR" ;; esac
+	[ ! -L "$STATE_DIR" ] || fail "state directory must not be a symbolic link"
+	[ ! -L "$CONFIG_DIR" ] || fail "configuration directory must not be a symbolic link"
+}
+
+ensure_state() {
+	validate_state_paths
+	umask 077
+	mkdir -p "$CONFIG_DIR"
+	chmod 0700 "$STATE_DIR" "$CONFIG_DIR"
+	state_real="$(CDPATH='' cd -- "$STATE_DIR" && pwd -P)"
+	config_real="$(CDPATH='' cd -- "$CONFIG_DIR" && pwd -P)"
+	case "$config_real" in "$state_real"/*) ;; *) fail "configuration directory resolves outside $STATE_DIR" ;; esac
+}
+
+verify_rootless_engine() {
+	case "$ENGINE" in
+		podman)
+			[ "$(podman info --format '{{.Host.Security.Rootless}}' 2>/dev/null || true)" = true ] ||
+				fail "the selected Podman engine is not rootless"
+			;;
+		docker)
+			docker info --format '{{json .SecurityOptions}}' 2>/dev/null | grep -q 'name=rootless' ||
+				fail "the selected Docker engine is not rootless"
+			;;
+	esac
+}
+
+configured_image() {
+	if [ -f "$IMAGE_FILE" ] && [ ! -L "$IMAGE_FILE" ]; then
+		stored="$(sed -n '1p' "$IMAGE_FILE")"
+		if [ -n "$stored" ]; then
+			validate_image_reference "$stored"
+			printf '%s\n' "$stored"
+			return 0
+		fi
+	fi
+	validate_image_reference "$IMAGE"
+	printf '%s\n' "$IMAGE"
+}
+
+write_image() {
+	validate_image_reference "$1"
+	ensure_state
+	printf '%s\n' "$1" > "$IMAGE_FILE"
+	chmod 0600 "$IMAGE_FILE"
+}
+
+container_exists() {
+	"$ENGINE" container inspect "$CONTAINER_NAME" >/dev/null 2>&1
+}
+
+container_running() {
+	[ "$("$ENGINE" container inspect --format '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || true)" = true ]
+}
+
+common_security_args() {
+	set -- --read-only --cap-drop ALL --security-opt no-new-privileges \
+		--pids-limit 64 --memory 128m --env GOMAXPROCS=1 --env GOMEMLIMIT=48MiB --env GOGC=70
+	if [ "$ENGINE" = podman ]; then
+		set -- "$@" --userns "keep-id:uid=65532,gid=65532"
+	else
+		set -- "$@" --user "$(id -u):$(id -g)"
+	fi
+	COMMON_ARGS_FILE="$STATE_DIR/.common-args"
+	: > "$COMMON_ARGS_FILE"
+	for argument in "$@"; do printf '%s\n' "$argument" >> "$COMMON_ARGS_FILE"; done
+}
+
+require_config() {
+	[ -f "$CONFIG_DIR/config.json" ] && [ ! -L "$CONFIG_DIR/config.json" ] || fail "configuration is missing; run '$PROGRAM init' first"
+	[ -f "$CONFIG_DIR/client-info.json" ] && [ ! -L "$CONFIG_DIR/client-info.json" ] || fail "client information is missing"
+}
+
+read_port() {
+	command_exists jq || fail "jq is required for container lifecycle commands"
+	key="$1"
+	jq -er ".${key}.port // empty" "$CONFIG_DIR/config.json" 2>/dev/null || true
+}
+
+check_image() {
+	image="$1"
+	require_config
+	common_security_args
+	set -- "$ENGINE" run --rm --network none
+	while IFS= read -r argument; do set -- "$@" "$argument"; done < "$COMMON_ARGS_FILE"
+	set -- "$@" --volume "$CONFIG_DIR:/etc/mini-singbox:ro" "$image" check -c /etc/mini-singbox/config.json
+	"$@"
+}
+
+start_container() {
+	image="$1"
+	require_config
+	check_image "$image" >/dev/null
+	container_exists && fail "container already exists; run '$PROGRAM down' first"
+	common_security_args
+	set -- "$ENGINE" run -d --name "$CONTAINER_NAME" --restart unless-stopped --stop-timeout 10
+	while IFS= read -r argument; do set -- "$@" "$argument"; done < "$COMMON_ARGS_FILE"
+	for mapping in vless_reality:tcp hysteria2:udp anytls:tcp; do
+		key="${mapping%%:*}"
+		transport="${mapping#*:}"
+		port="$(read_port "$key")"
+		[ -n "$port" ] && set -- "$@" --publish "$port:$port/$transport"
+	done
+	set -- "$@" --volume "$CONFIG_DIR:/etc/mini-singbox:ro" "$image" run -c /etc/mini-singbox/config.json
+	container_id="$("$@")" || return 1
+	sleep 3
+	if ! container_running; then
+		"$ENGINE" logs "$CONTAINER_NAME" >&2 || true
+		"$ENGINE" rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+		return 1
+	fi
+	printf 'started %s (%s)\n' "$CONTAINER_NAME" "$container_id"
+}
+
+stop_and_remove() {
+	container_exists || return 0
+	"$ENGINE" stop --time 10 "$CONTAINER_NAME" >/dev/null 2>&1 || true
+	"$ENGINE" rm "$CONTAINER_NAME" >/dev/null
+}
+
+generate_config() {
+	ensure_state
+	[ ! -e "$CONFIG_DIR/config.json" ] || fail "configuration already exists; init never overwrites credentials"
+	[ -n "${MINI_SINGBOX_PUBLIC_ADDRESS:-}" ] || \
+		fail "MINI_SINGBOX_PUBLIC_ADDRESS is required for container init"
+	image="$(configured_image)"
+	if ! "$ENGINE" image inspect "$image" >/dev/null 2>&1; then
+		"$ENGINE" pull "$image" >/dev/null
+	fi
+	protocols="${MINI_SINGBOX_PROTOCOLS:-reality,hy2,anytls}"
+	case ",$protocols," in
+		*,reality,*)
+			[ -n "${MINI_SINGBOX_REALITY_SERVER_NAME:-}" ] || fail "MINI_SINGBOX_REALITY_SERVER_NAME is required when Reality is enabled"
+			[ -n "${MINI_SINGBOX_REALITY_HANDSHAKE:-}" ] || fail "MINI_SINGBOX_REALITY_HANDSHAKE is required when Reality is enabled"
+			;;
+	esac
+	case ",$protocols," in
+		*,hy2,*|*,anytls,*) [ -n "${MINI_SINGBOX_TLS_SAN:-}" ] || fail "MINI_SINGBOX_TLS_SAN is required when Hysteria2 or AnyTLS is enabled" ;;
+	esac
+	listen="${MINI_SINGBOX_LISTEN:-::}"
+	reality_port="${MINI_SINGBOX_REALITY_PORT:-20001}"
+	hy2_port="${MINI_SINGBOX_HY2_PORT:-20002}"
+	anytls_port="${MINI_SINGBOX_ANYTLS_PORT:-20003}"
+	common_security_args
+	set -- "$ENGINE" run --rm --network none
+	while IFS= read -r argument; do set -- "$@" "$argument"; done < "$COMMON_ARGS_FILE"
+	set -- "$@" --volume "$CONFIG_DIR:/output" "$image" generate --output /output \
+		--protocols "$protocols" --listen "$listen" \
+		--public-address "$MINI_SINGBOX_PUBLIC_ADDRESS" \
+		--reality-port "$reality_port" --hy2-port "$hy2_port" --anytls-port "$anytls_port" \
+		--public-reality-port "${MINI_SINGBOX_PUBLIC_REALITY_PORT:-$reality_port}" \
+		--public-hy2-port "${MINI_SINGBOX_PUBLIC_HY2_PORT:-$hy2_port}" \
+		--public-anytls-port "${MINI_SINGBOX_PUBLIC_ANYTLS_PORT:-$anytls_port}" \
+		--reality-server-name "${MINI_SINGBOX_REALITY_SERVER_NAME:-}" \
+		--reality-handshake "${MINI_SINGBOX_REALITY_HANDSHAKE:-}" --tls-san "${MINI_SINGBOX_TLS_SAN:-}"
+	if [ "${MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE:-0}" = 1 ]; then
+		set -- "$@" --allow-insecure-anytls-share
+	fi
+	"$@" >/dev/null
+	write_image "$image"
+	check_image "$image" >/dev/null
+	printf 'configuration created in %s\n' "$CONFIG_DIR"
+	warn "configuration and client delivery contain credentials; keep this directory private"
+}
+
+show_status() {
+	require_config
+	image="$(configured_image)"
+	printf 'engine:        %s\n' "$ENGINE"
+	printf 'image:         %s\n' "$image"
+	check_image "$image" >/dev/null && printf 'configuration: valid\n'
+	if container_running; then
+		printf 'container:     running\n'
+		"$ENGINE" container inspect --format 'container id:  {{.Id}}\nstarted:       {{.State.StartedAt}}' "$CONTAINER_NAME"
+		printf 'published ports:\n'
+		"$ENGINE" port "$CONTAINER_NAME"
+	else
+		printf 'container:     stopped\n'
+		return 1
+	fi
+}
+
+show_logs() {
+	lines="${1:-100}"
+	case "$lines" in ''|*[!0-9]*) fail "log line count must be 1-1000" ;; esac
+	[ "$lines" -ge 1 ] && [ "$lines" -le 1000 ] || fail "log line count must be 1-1000"
+	container_exists || fail "container does not exist"
+	"$ENGINE" logs --tail "$lines" "$CONTAINER_NAME"
+}
+
+show_qr() {
+	protocol="${1:-all}"
+	case "$protocol" in reality|hy2|anytls|all) ;; *) fail "QR protocol must be reality, hy2, anytls, or all" ;; esac
+	command_exists qrencode || fail "qrencode is required to display terminal QR codes"
+	require_config
+	warn "QR codes and links contain client credentials"
+	found=0
+	for item in reality:share-reality:vless hy2:share-hysteria2:hysteria2 anytls:share-anytls:anytls; do
+		name="${item%%:*}"; rest="${item#*:}"; file="${rest%%:*}"; scheme="${rest#*:}"
+		[ "$protocol" = all ] || [ "$protocol" = "$name" ] || continue
+		path="$CONFIG_DIR/$file.txt"
+		[ -f "$path" ] && [ ! -L "$path" ] || { [ "$protocol" = all ] && continue; fail "$name share link is unavailable"; }
+		link="$(sed -n '1p' "$path")"
+		case "$link" in "$scheme"://* ) ;; *) fail "invalid $name sharing link" ;; esac
+		printf '\n%s\n' "$name"
+		printf '%s\n' "$link" | qrencode -t ANSIUTF8
+		printf 'link (sensitive): %s\n' "$link"
+		found=1
+	done
+	[ "$found" -eq 1 ] || fail "no QR-compatible sharing links found; authenticated AnyTLS uses client-anytls-sing-box-outbound.json"
+}
+
+switch_image() {
+	new_image="$1"
+	[ -n "$new_image" ] || fail "upgrade requires an image reference"
+	validate_image_reference "$new_image"
+	require_config
+	old_image="$(configured_image)"
+	old_image_id="$("$ENGINE" image inspect --format '{{.Id}}' "$old_image" 2>/dev/null || printf '%s' "$old_image")"
+	case "$new_image" in
+		sha256:*) "$ENGINE" image inspect "$new_image" >/dev/null 2>&1 || fail "rollback image is no longer available locally" ;;
+		*) "$ENGINE" pull "$new_image" >/dev/null ;;
+	esac
+	check_image "$new_image" >/dev/null
+	was_running=0
+	container_running && was_running=1
+	if [ "$was_running" -eq 0 ]; then
+		printf '%s\n' "$old_image_id" > "$PREVIOUS_IMAGE_FILE"
+		chmod 0600 "$PREVIOUS_IMAGE_FILE"
+		write_image "$new_image"
+		printf 'validated %s; container remains stopped; rollback image is %s\n' "$new_image" "$old_image_id"
+		return 0
+	fi
+	[ "$was_running" -eq 1 ] && stop_and_remove
+	if ! start_container "$new_image" >/dev/null; then
+		stop_and_remove
+		if [ "$was_running" -eq 1 ]; then start_container "$old_image_id" >/dev/null || true; fi
+		fail "new image failed startup; previous image restored"
+	fi
+	printf '%s\n' "$old_image_id" > "$PREVIOUS_IMAGE_FILE"
+	chmod 0600 "$PREVIOUS_IMAGE_FILE"
+	write_image "$new_image"
+	printf 'upgraded to %s; rollback image is %s\n' "$new_image" "$old_image_id"
+}
+
+rollback_image() {
+	[ -f "$PREVIOUS_IMAGE_FILE" ] && [ ! -L "$PREVIOUS_IMAGE_FILE" ] || fail "no rollback image is recorded"
+	previous="$(sed -n '1p' "$PREVIOUS_IMAGE_FILE")"
+	[ -n "$previous" ] || fail "recorded rollback image is empty"
+	switch_image "$previous"
+}
+
+renew_certificate() {
+	command_exists jq || fail "jq is required for certificate renewal"
+	require_config
+	image="$(configured_image)"
+	public_address="$(jq -er '.public_address' "$CONFIG_DIR/client-info.json")" || fail "missing public address"
+	reality_port="$(jq -r '.vless_reality.port // 0' "$CONFIG_DIR/client-info.json")"
+	hy2_port="$(jq -r '.hysteria2.port // 0' "$CONFIG_DIR/client-info.json")"
+	anytls_port="$(jq -r '.anytls.port // 0' "$CONFIG_DIR/client-info.json")"
+	was_running=0
+	container_running && was_running=1
+	work="$(mktemp -d "$STATE_DIR/renew.XXXXXX")" || fail "cannot create renewal workspace"
+	case "$work" in "$STATE_DIR"/renew.*) ;; *) fail "unsafe renewal workspace" ;; esac
+	backup="$work/backup"
+	generated="$work/generated"
+	mkdir "$backup" "$generated"
+	cp -a "$CONFIG_DIR/." "$backup/"
+	RENEW_ACTIVE=1
+	RENEW_WORK="$work"
+	RENEW_BACKUP="$backup"
+	RENEW_IMAGE="$image"
+	RENEW_WAS_RUNNING="$was_running"
+	[ "$was_running" -eq 1 ] && stop_and_remove
+	common_security_args
+	set -- "$ENGINE" run --rm --network none
+	while IFS= read -r argument; do set -- "$@" "$argument"; done < "$COMMON_ARGS_FILE"
+	set -- "$@" --volume "$CONFIG_DIR:/etc/mini-singbox:ro" --volume "$generated:/output" \
+		"$image" renew-certificate -c /etc/mini-singbox/config.json --output /output \
+		--public-address "$public_address" --reality-port "$reality_port" --hy2-port "$hy2_port" --anytls-port "$anytls_port"
+	if jq -e '(.anytls.share_uri // "") | startswith("anytls://")' "$CONFIG_DIR/client-info.json" >/dev/null 2>&1; then
+		set -- "$@" --allow-insecure-anytls-share
+	fi
+	"$@" >/dev/null || fail "certificate renewal generation failed"
+	for required in tls.crt tls.key client-info.json; do [ -f "$generated/$required" ] || fail "renewal output missing $required"; done
+	for name in tls.crt tls.key client-info.json client-anytls-sing-box-outbound.json share-reality.txt share-hysteria2.txt share-anytls.txt; do
+		if [ -f "$generated/$name" ]; then cp "$generated/$name" "$CONFIG_DIR/$name"; else rm -f "$CONFIG_DIR/$name"; fi
+	done
+	chmod 0600 "$CONFIG_DIR"/*.json "$CONFIG_DIR"/*.key "$CONFIG_DIR"/share-*.txt 2>/dev/null || true
+	chmod 0644 "$CONFIG_DIR/tls.crt"
+	check_image "$image" >/dev/null || fail "renewed configuration failed validation"
+	if [ "$was_running" -eq 1 ]; then
+		start_container "$image" >/dev/null || fail "renewed container failed startup"
+	fi
+	RENEW_ACTIVE=0
+	rm -rf "$work"
+	printf 'TLS certificate renewed; credentials and Reality keys were preserved.\n'
+	printf 'Re-import Hysteria2 and AnyTLS client delivery because certificate pins changed.\n'
+}
+
+command="${1:-}"
+case "$command" in
+	-h|--help|help) [ "$#" -eq 1 ] || fail "help accepts no arguments"; usage; exit 0 ;;
+esac
+
+select_engine
+[ "$(id -u)" -ne 0 ] || fail "run this helper as an unprivileged user, not root or sudo"
+verify_rootless_engine
+ensure_state
+case "$CONTAINER_NAME" in ''|*[!A-Za-z0-9_.-]*) fail "invalid container name" ;; esac
+case "${PURGE:-0}" in 0|1) ;; *) fail "PURGE must be 0 or 1" ;; esac
+mkdir "$LOCK_DIR" 2>/dev/null || fail "another container-control command is active for $STATE_DIR"
+cleanup() {
+	status=$?
+	trap - EXIT HUP INT TERM
+	if [ "$status" -ne 0 ] && [ "$RENEW_ACTIVE" -eq 1 ]; then
+		warn "certificate renewal failed; restoring the previous configuration"
+		stop_and_remove || true
+		rm -f "$CONFIG_DIR"/*
+		cp -a "$RENEW_BACKUP/." "$CONFIG_DIR/" || true
+		if [ "$RENEW_WAS_RUNNING" -eq 1 ]; then start_container "$RENEW_IMAGE" >/dev/null || warn "previous container could not be restarted"; fi
+	fi
+	case "$RENEW_WORK" in "$STATE_DIR"/renew.*) rm -rf "$RENEW_WORK" ;; esac
+	rmdir "$LOCK_DIR" >/dev/null 2>&1 || true
+	exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+case "$command" in
+	init) [ "$#" -eq 1 ] || fail "init accepts no arguments"; generate_config ;;
+	up) [ "$#" -eq 1 ] || fail "up accepts no arguments"; start_container "$(configured_image)" ;;
+	down) [ "$#" -eq 1 ] || fail "down accepts no arguments"; stop_and_remove; printf 'container stopped; configuration kept in %s\n' "$CONFIG_DIR" ;;
+	status) [ "$#" -eq 1 ] || fail "status accepts no arguments"; show_status ;;
+	logs) [ "$#" -le 2 ] || fail "logs accepts at most one line count"; show_logs "${2:-100}" ;;
+	check) [ "$#" -eq 1 ] || fail "check accepts no arguments"; check_image "$(configured_image)" ;;
+	qr) [ "$#" -le 2 ] || fail "qr accepts at most one protocol"; show_qr "${2:-all}" ;;
+	upgrade) [ "$#" -eq 2 ] || fail "upgrade requires exactly one image reference"; switch_image "$2" ;;
+	rollback) [ "$#" -eq 1 ] || fail "rollback accepts no arguments"; rollback_image ;;
+	certificate) [ "$#" -eq 2 ] && [ "$2" = renew ] || fail "certificate accepts only renew"; renew_certificate ;;
+	uninstall)
+		[ "$#" -eq 1 ] || fail "uninstall accepts no arguments"
+		stop_and_remove
+		if [ "${PURGE:-0}" = 1 ]; then
+			validate_state_paths
+			rm -rf "$STATE_DIR"
+			printf 'removed container and %s; credentials cannot be recovered by this helper\n' "$STATE_DIR"
+		else
+			rm -f "$IMAGE_FILE" "$PREVIOUS_IMAGE_FILE" "$STATE_DIR/.common-args"
+			printf 'removed container state; configuration kept in %s\n' "$CONFIG_DIR"
+		fi
+		;;
+	*) usage >&2; exit 2 ;;
+esac

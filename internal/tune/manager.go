@@ -39,6 +39,10 @@ func (m *Manager) Apply(inputs Inputs, dryRun bool) (result ApplyResult, err err
 	if dryRun {
 		return result, nil
 	}
+	switch plan.Profile.Environment.Virtualization {
+	case "docker", "podman", "containerd", "kubernetes", "lxc", "openvz":
+		return ApplyResult{}, fmt.Errorf("tune apply is disabled inside %s containers; tune the host instead", plan.Profile.Environment.Virtualization)
+	}
 	if len(requested) == 0 {
 		verification, verifyErr := m.Verify()
 		if verifyErr != nil {

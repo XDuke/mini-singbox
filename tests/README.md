@@ -71,3 +71,23 @@ separate live integration gates and must be reported from the actual test lab.
 The sanitized `v1.0.0` live-integration and 128 MiB results are recorded in
 `docs/validation.md`. A new stable tag must still rerun every automated release
 gate and publish fresh signing, SBOM, and provenance evidence.
+
+## Alpine and rootless Podman
+
+`alpine-runtime.sh` is a destructive, disposable-fixture acceptance harness. It
+installs the exact CI candidate through the normal deployer and checksum path,
+then exercises either:
+
+- Alpine external-supervisor start/status, blocked container tuning, non-root
+  identity, transactional certificate renewal, restart and purge; or
+- a booted OpenRC service, default-runlevel enablement, restart, status, logs
+  and purge.
+
+CI runs external mode on Alpine 3.23 and 3.24 and OpenRC mode in a privileged
+Alpine 3.24 fixture. Do not run the harness on a host containing a real
+`/etc/mini-singbox`; it intentionally uninstalls and purges the fixture.
+
+The `rootless-podman` CI job separately builds the scratch image, imports it into
+the unprivileged Podman store, then validates helper-driven generation, check,
+start, status, read-only root, PID/memory limits, image upgrade, rollback and
+stop. These are short lifecycle gates, not long-duration or real-client proof.

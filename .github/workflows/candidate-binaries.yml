@@ -15,13 +15,18 @@ jobs:
   publish:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.head_branch == 'main' &&
+      (github.event.workflow_run.head_branch == 'main' ||
+       github.event.workflow_run.head_branch == 'develop/v1.2.0-alpine') &&
       github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
     env:
       HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
       RUN_ID: ${{ github.event.workflow_run.id }}
     steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.HEAD_SHA }}
+          fetch-depth: 1
       - name: Download the binaries that passed CI
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,6 +52,32 @@ jobs:
           arm64_sha256="$(sha256sum dist/mini-singbox-linux-arm64 | awk '{ print $1 }')"
           grep -Fx "amd64_sha256=$amd64_sha256" dist/candidate-binary-identity.txt
           grep -Fx "arm64_sha256=$arm64_sha256" dist/candidate-binary-identity.txt
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Stage commit-specific deployment bundle
+        run: |
+          grep -Fq 'github.com/sagernet/sing-box v1.13.18' go.mod
+          short_commit="$(printf '%s' "$HEAD_SHA" | cut -c1-12)"
+          release_tag="candidate-$short_commit"
+          cat > dist/release-metadata.txt <<EOF
+          version=$release_tag
+          commit=$HEAD_SHA
+          go_version=1.26.6
+          sing_box_version=v1.13.18
+          channel=candidate
+          EOF
+          cp bootstrap.sh dist/bootstrap.sh
+          cp scripts/deploy.sh dist/deploy.sh
+          cp scripts/mini-singboxctl dist/mini-singboxctl
+          cp scripts/mini-singbox-containerctl dist/mini-singbox-containerctl
+          cp scripts/uninstall.sh dist/uninstall.sh
+          cp packaging/systemd/mini-singbox.service dist/mini-singbox.service
+          cp packaging/systemd/mini-singbox-container.service dist/mini-singbox-container.service
+          cp packaging/openrc/mini-singbox dist/mini-singbox
+          cp packaging/external/mini-singbox-run dist/mini-singbox-run
+          cp release/minisign.pub dist/minisign.pub
+          chmod 0755 dist/bootstrap.sh dist/deploy.sh dist/mini-singboxctl \
+            dist/mini-singbox-containerctl dist/uninstall.sh dist/mini-singbox dist/mini-singbox-run
       - name: Attest Candidate binaries
         id: provenance
         uses: actions/attest-build-provenance@v3
@@ -59,11 +90,8 @@ jobs:
           BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
         run: |
           cp "$BUNDLE_PATH" dist/provenance.intoto.jsonl
-          (cd dist && sha256sum \
-            mini-singbox-linux-amd64 \
-            mini-singbox-linux-arm64 \
-            candidate-binary-identity.txt \
-            provenance.intoto.jsonl) > dist/SHA256SUMS
+          (cd dist && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+            | LC_ALL=C sort | xargs sha256sum) > dist/SHA256SUMS
       - name: Publish commit-specific prerelease
         env:
           GH_TOKEN: ${{ github.token }}
@@ -74,12 +102,7 @@ jobs:
             echo "Release $release_tag already exists; refusing to replace immutable assets"
             exit 0
           fi
-          gh release create "$release_tag" \
-            dist/mini-singbox-linux-amd64 \
-            dist/mini-singbox-linux-arm64 \
-            dist/SHA256SUMS \
-            dist/candidate-binary-identity.txt \
-            dist/provenance.intoto.jsonl \
+          gh release create "$release_tag" dist/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$HEAD_SHA" \
             --prerelease \

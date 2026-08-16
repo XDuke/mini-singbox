@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
   id-token: write
   attestations: write
 
@@ -116,6 +117,70 @@ jobs:
         env:
           BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
         run: cp "$BUNDLE_PATH" dist/provenance.intoto.jsonl
+      - name: Prepare release metadata and OCI tags
+        id: oci-meta
+        env:
+          RELEASE_COMMIT: ${{ steps.tag.outputs.commit }}
+        run: |
+          set -eu
+          grep -Fq 'github.com/sagernet/sing-box v1.13.18' go.mod
+          build_time="$(git show -s --format=%cI HEAD)"
+          {
+            printf 'version=%s\n' "$RELEASE_TAG"
+            printf 'commit=%s\n' "$RELEASE_COMMIT"
+            printf 'go_version=1.26.6\n'
+            printf 'sing_box_version=v1.13.18\n'
+            case "$RELEASE_TAG" in *-*) printf 'channel=prerelease\n' ;; *) printf 'channel=stable\n' ;; esac
+          } > dist/release-metadata.txt
+          image=ghcr.io/xduke/mini-singbox
+          tags="$image:$RELEASE_TAG"
+          case "$RELEASE_TAG" in
+            *-*) ;;
+            *)
+              major_minor="$(printf '%s' "$RELEASE_TAG" | sed -E 's/^(v[0-9]+\.[0-9]+)\.[0-9]+$/\1/')"
+              tags="$tags,$image:$major_minor,$image:latest"
+              ;;
+          esac
+          printf 'image=%s\n' "$image" >> "$GITHUB_OUTPUT"
+          printf 'tags=%s\n' "$tags" >> "$GITHUB_OUTPUT"
+          printf 'build_time=%s\n' "$build_time" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Refuse replacement of an existing immutable OCI version tag
+        run: |
+          if docker buildx imagetools inspect '${{ steps.oci-meta.outputs.image }}:${{ env.RELEASE_TAG }}' >/dev/null 2>&1; then
+            echo 'immutable OCI version tag already exists' >&2
+            exit 1
+          fi
+      - name: Build and publish multi-architecture OCI image
+        id: oci
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.oci-meta.outputs.tags }}
+          provenance: false
+          build-args: |
+            VERSION=${{ env.RELEASE_TAG }}
+            COMMIT=${{ steps.tag.outputs.commit }}
+            BUILD_TIME=${{ steps.oci-meta.outputs.build_time }}
+            DIRTY=false
+      - name: Attest OCI image
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.oci-meta.outputs.image }}
+          subject-digest: ${{ steps.oci.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable OCI identity
+        run: |
+          printf '%s@%s\n' '${{ steps.oci-meta.outputs.image }}' '${{ steps.oci.outputs.digest }}' > dist/oci-digests.txt
+          docker buildx imagetools inspect '${{ steps.oci-meta.outputs.image }}@${{ steps.oci.outputs.digest }}'
       - name: Assemble and sign checksums
         env:
           MINISIGN_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
@@ -139,6 +204,8 @@ jobs:
             dist/go-version-arm64.txt
             dist/compiled-deps-linux-amd64.txt
             dist/upstream-compiled-network-utilities.txt
+            dist/release-metadata.txt
+            dist/oci-digests.txt
             LICENSE
             NOTICE
             README.md
@@ -147,6 +214,7 @@ jobs:
             SECURITY.md
             MIGRATION.md
             docs/release.md
+            docs/alpine-container.md
             docs/nat-vps.md
             docs/tcp-tuning.md
             docs/v1.0.0-readiness.md
@@ -156,8 +224,11 @@ jobs:
             scripts/deploy.sh
             scripts/uninstall.sh
             scripts/mini-singboxctl
+            scripts/mini-singbox-containerctl
             packaging/systemd/mini-singbox.service
             packaging/systemd/mini-singbox-container.service
+            packaging/openrc/mini-singbox
+            packaging/external/mini-singbox-run
           )
           duplicate_names="$(printf '%s\n' "${release_files[@]}" | sed 's|.*/||' | sort | uniq -d)"
           test -z "$duplicate_names"
@@ -190,6 +261,8 @@ jobs:
             dist/go-version-arm64.txt
             dist/compiled-deps-linux-amd64.txt
             dist/upstream-compiled-network-utilities.txt
+            dist/release-metadata.txt
+            dist/oci-digests.txt
             LICENSE
             NOTICE
             README.md
@@ -198,6 +271,7 @@ jobs:
             SECURITY.md
             MIGRATION.md
             docs/release.md
+            docs/alpine-container.md
             docs/nat-vps.md
             docs/tcp-tuning.md
             docs/v1.0.0-readiness.md
@@ -207,8 +281,11 @@ jobs:
             scripts/deploy.sh
             scripts/uninstall.sh
             scripts/mini-singboxctl
+            scripts/mini-singbox-containerctl
             packaging/systemd/mini-singbox.service
             packaging/systemd/mini-singbox-container.service
+            packaging/openrc/mini-singbox
+            packaging/external/mini-singbox-run
           )
           duplicate_names="$(printf '%s\n' "${files[@]}" | sed 's|.*/||' | sort | uniq -d)"
           test -z "$duplicate_names"

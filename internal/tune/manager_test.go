@@ -170,6 +170,36 @@ func TestHysteria2OnlyApplyCreatesNoState(t *testing.T) {
 	}
 }
 
+func TestApplyRefusesPodmanContainer(t *testing.T) {
+	manager := newFakeManager(t, WorkloadProfile{Reality: true})
+	writeTestFile(t, filepath.Join(manager.options.RootDirectory, "run/.containerenv"), "podman\n")
+	if _, err := manager.Apply(Inputs{}, true); err != nil {
+		t.Fatalf("dry run should remain available in containers: %v", err)
+	}
+	_, err := manager.Apply(Inputs{}, false)
+	if err == nil || !strings.Contains(err.Error(), "tune the host instead") {
+		t.Fatalf("container apply error = %v", err)
+	}
+	if _, statErr := os.Stat(manager.options.StateDirectory); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("container apply created tuning state: %v", statErr)
+	}
+}
+
+func TestApplyRefusesLXCContainer(t *testing.T) {
+	manager := newFakeManager(t, WorkloadProfile{AnyTLS: true})
+	writeTestFile(t, filepath.Join(manager.options.ProcDirectory, "self/cgroup"), "0::/lxc/test\n")
+	if _, err := manager.Apply(Inputs{}, true); err != nil {
+		t.Fatalf("dry run should remain available in containers: %v", err)
+	}
+	_, err := manager.Apply(Inputs{}, false)
+	if err == nil || !strings.Contains(err.Error(), "tune the host instead") {
+		t.Fatalf("LXC apply error = %v", err)
+	}
+	if _, statErr := os.Stat(manager.options.StateDirectory); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("LXC apply created tuning state: %v", statErr)
+	}
+}
+
 func TestRollbackProtectsExternalDrift(t *testing.T) {
 	manager := newFakeManager(t, WorkloadProfile{Reality: true})
 	if _, err := manager.Apply(Inputs{}, false); err != nil {

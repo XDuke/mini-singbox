@@ -27,6 +27,14 @@ echo "mini-singbox uninstaller: program and service files will be removed"
 if [ "$PURGE" = "1" ]; then
 	echo "mini-singbox uninstaller: PURGE=1 will remove /etc/mini-singbox and /var/lib/mini-singbox"
 fi
+
+RUNTIME=""
+if [ -f /etc/mini-singbox/deployment-info.txt ] && [ ! -L /etc/mini-singbox/deployment-info.txt ]; then
+	RUNTIME="$(awk -F= '$1 == "runtime" { print $2 }' /etc/mini-singbox/deployment-info.txt)"
+	if [ -z "$RUNTIME" ] && grep -q '^systemd_profile=' /etc/mini-singbox/deployment-info.txt; then
+		RUNTIME=systemd
+	fi
+fi
 if [ "$PURGE_BACKUPS" = "1" ]; then
 	echo "mini-singbox uninstaller: PURGE_BACKUPS=1 will remove /var/backups/mini-singbox"
 fi
@@ -54,9 +62,35 @@ if command -v rc-service >/dev/null 2>&1; then
 	rm -f /etc/init.d/mini-singbox
 fi
 
+if [ "$RUNTIME" = external ] && [ -f /run/mini-singbox/mini-singbox.pid ] && \
+	[ ! -L /run/mini-singbox/mini-singbox.pid ]; then
+	pid="$(cat /run/mini-singbox/mini-singbox.pid 2>/dev/null || true)"
+	case "$pid" in
+		''|*[!0-9]*|0) ;;
+		*)
+			if kill -0 "$pid" 2>/dev/null; then
+				kill -TERM "$pid" 2>/dev/null || true
+				attempt=0
+				while kill -0 "$pid" 2>/dev/null && [ "$attempt" -lt 10 ]; do
+					sleep 1
+					attempt=$((attempt + 1))
+				done
+				kill -0 "$pid" 2>/dev/null && {
+					echo "mini-singbox uninstaller: external supervisor restarted or did not stop the process; installation was kept" >&2
+					exit 1
+				}
+			fi
+			;;
+	esac
+fi
+
 rm -f /usr/local/bin/mini-singbox \
 	/usr/local/bin/mini-singboxctl /usr/local/bin/mini-singbox-update \
-	/usr/local/bin/mini-singbox-uninstall
+	/usr/local/bin/mini-singbox-uninstall /usr/local/bin/mini-singbox-run \
+	/usr/local/bin/mini-singbox-containerctl
+if [ -d /run/mini-singbox ] && [ ! -L /run/mini-singbox ]; then
+	rm -rf /run/mini-singbox
+fi
 
 if [ "$PURGE" = "1" ]; then
 	rm -rf /etc/mini-singbox

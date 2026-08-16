@@ -84,11 +84,16 @@ jobs:
       - name: Shell syntax
         run: |
           bash -n bootstrap.sh tests/bootstrap.sh
-          sh -n scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/no-egress.sh tests/cgroup-observe.sh tests/restart-cycle.sh tests/control-tool.sh
+          sh -n scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl scripts/mini-singbox-containerctl \
+            packaging/openrc/mini-singbox packaging/external/mini-singbox-run \
+            tests/no-egress.sh tests/cgroup-observe.sh tests/restart-cycle.sh tests/control-tool.sh \
+            tests/fake-release-curl.sh tests/alpine-runtime.sh
       - name: Shell static analysis
         run: |
           shellcheck --shell bash bootstrap.sh tests/bootstrap.sh
-          shellcheck --shell sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl tests/control-tool.sh tests/no-egress.sh
+          shellcheck --shell sh scripts/uninstall.sh scripts/deploy.sh scripts/mini-singboxctl scripts/mini-singbox-containerctl \
+            packaging/openrc/mini-singbox packaging/external/mini-singbox-run \
+            tests/control-tool.sh tests/no-egress.sh tests/fake-release-curl.sh tests/alpine-runtime.sh
       - name: Stable bootstrap guardrails
         run: tests/bootstrap.sh
       - name: On-demand control-plane guardrails
@@ -111,6 +116,19 @@ jobs:
             'TasksMax=64'; do
             grep -Fx "$setting" packaging/systemd/mini-singbox-container.service
           done
+      - name: OpenRC and external runtime guardrails
+        run: |
+          grep -Fx 'command_user="mini-singbox:mini-singbox"' packaging/openrc/mini-singbox
+          grep -Fx 'supervisor="supervise-daemon"' packaging/openrc/mini-singbox
+          grep -Fx 'pidfile="/run/mini-singbox.pid"' packaging/openrc/mini-singbox
+          grep -Fx 'no_new_privs=yes' packaging/openrc/mini-singbox
+          test -z "$(grep -F 'owner mini-singbox' packaging/openrc/mini-singbox || true)"
+          grep -Fq 'exec runuser -u "$SERVICE_USER"' packaging/external/mini-singbox-run
+          grep -Fq 'tune apply is disabled for external/container runtime' scripts/mini-singboxctl
+          grep -Fq 'tune apply is disabled inside' internal/tune/manager.go
+          test -z "$(grep -F '/var/run/docker.sock' scripts/mini-singbox-containerctl || true)"
+          grep -Fq 'the selected Podman engine is not rootless' scripts/mini-singbox-containerctl
+          grep -Fq 'the selected Docker engine is not rootless' scripts/mini-singbox-containerctl
       - name: Compose syntax
         env:
           REALITY_SERVER_NAME: www.example.com
@@ -193,3 +211,184 @@ jobs:
           docker stop --time 10 "$container_id"
           test "$(docker inspect "$container_id" --format '{{.State.ExitCode}}')" = 0
           docker rm "$container_id"
+
+  alpine:
+    runs-on: ubuntu-24.04
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        alpine: ["3.23", "3.24"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-audit-inputs
+          path: artifacts
+      - name: Alpine external-supervisor acceptance
+        run: |
+          chmod 0755 artifacts/mini-singbox-linux-amd64
+          docker run --rm \
+            -v "$PWD:/workspace:ro" \
+            -v "$PWD/artifacts:/artifacts:ro" \
+            "alpine:${{ matrix.alpine }}" \
+            /workspace/tests/alpine-runtime.sh external
+
+  alpine-openrc:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-audit-inputs
+          path: artifacts
+      - name: Boot privileged Alpine OpenRC fixture
+        run: |
+          chmod 0755 artifacts/mini-singbox-linux-amd64
+          docker run -d --privileged --name mini-singbox-openrc \
+            -v "$PWD:/workspace:ro" \
+            -v "$PWD/artifacts:/artifacts:ro" \
+            alpine:3.24 /bin/sh -c 'apk add --no-cache openrc && exec /sbin/init'
+          for attempt in $(seq 1 30); do
+            docker exec mini-singbox-openrc test -d /run/openrc && exit 0
+            sleep 1
+          done
+          docker logs mini-singbox-openrc
+          exit 1
+      - name: Alpine OpenRC acceptance
+        run: docker exec mini-singbox-openrc /workspace/tests/alpine-runtime.sh openrc
+      - name: OpenRC fixture logs
+        if: always()
+        run: |
+          docker logs mini-singbox-openrc || true
+          docker rm -f mini-singbox-openrc || true
+
+  rootless-podman:
+    runs-on: ubuntu-24.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install rootless Podman test dependency
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends podman jq
+      - name: Build local OCI image
+        run: docker build --build-arg VERSION=ci-podman --build-arg COMMIT=${GITHUB_SHA} --build-arg DIRTY=false -t mini-singbox:podman .
+      - name: Import image into rootless Podman
+        run: docker save mini-singbox:podman | podman load
+      - name: Rootless Podman lifecycle acceptance
+        env:
+          MINI_SINGBOX_CONTAINER_ENGINE: podman
+          MINI_SINGBOX_CONTAINER_STATE_DIR: ${{ runner.temp }}/mini-singbox-podman
+          MINI_SINGBOX_IMAGE: localhost/mini-singbox:podman
+          MINI_SINGBOX_PUBLIC_ADDRESS: 203.0.113.10
+          MINI_SINGBOX_REALITY_SERVER_NAME: www.example.com
+          MINI_SINGBOX_REALITY_HANDSHAKE: www.example.com:443
+          MINI_SINGBOX_TLS_SAN: 203.0.113.10
+          MINI_SINGBOX_REALITY_PORT: 32001
+          MINI_SINGBOX_HY2_PORT: 32002
+          MINI_SINGBOX_ANYTLS_PORT: 32003
+        run: |
+          scripts/mini-singbox-containerctl init
+          scripts/mini-singbox-containerctl check
+          scripts/mini-singbox-containerctl up
+          scripts/mini-singbox-containerctl status
+          test "$(podman inspect mini-singbox --format '{{.HostConfig.ReadonlyRootfs}}')" = true
+          test "$(podman inspect mini-singbox --format '{{.HostConfig.PidsLimit}}')" = 64
+          test "$(podman inspect mini-singbox --format '{{.HostConfig.Memory}}')" = 134217728
+          image_id="$(podman image inspect --format '{{.Id}}' localhost/mini-singbox:podman)"
+          scripts/mini-singbox-containerctl upgrade "$image_id"
+          scripts/mini-singbox-containerctl rollback
+          scripts/mini-singbox-containerctl down
+
+  candidate:
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/develop/v1.2.0-alpine'
+    needs: [test, container, alpine, alpine-openrc, rootless-podman]
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-audit-inputs
+          path: dist
+      - name: Validate immutable binary identity
+        run: |
+          set -eu
+          short_commit="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          expected_version="candidate-$short_commit"
+          chmod 0755 dist/mini-singbox-linux-amd64 dist/mini-singbox-linux-arm64
+          file dist/mini-singbox-linux-amd64 | grep -q 'statically linked'
+          file dist/mini-singbox-linux-arm64 | grep -q 'statically linked'
+          file dist/mini-singbox-linux-amd64 | grep -q 'x86-64'
+          file dist/mini-singbox-linux-arm64 | grep -q 'ARM aarch64'
+          grep -Fx "source_commit=$GITHUB_SHA" dist/candidate-binary-identity.txt
+          grep -Fx "version=$expected_version" dist/candidate-binary-identity.txt
+          amd64_sha256="$(sha256sum dist/mini-singbox-linux-amd64 | awk '{ print $1 }')"
+          arm64_sha256="$(sha256sum dist/mini-singbox-linux-arm64 | awk '{ print $1 }')"
+          grep -Fx "amd64_sha256=$amd64_sha256" dist/candidate-binary-identity.txt
+          grep -Fx "arm64_sha256=$arm64_sha256" dist/candidate-binary-identity.txt
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain)"
+      - name: Stage commit-specific deployment bundle
+        run: |
+          grep -Fq 'github.com/sagernet/sing-box v1.13.18' go.mod
+          short_commit="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          release_tag="candidate-$short_commit"
+          cat > dist/release-metadata.txt <<EOF
+          version=$release_tag
+          commit=$GITHUB_SHA
+          go_version=1.26.6
+          sing_box_version=v1.13.18
+          channel=candidate
+          EOF
+          cp bootstrap.sh dist/bootstrap.sh
+          cp scripts/deploy.sh dist/deploy.sh
+          cp scripts/mini-singboxctl dist/mini-singboxctl
+          cp scripts/mini-singbox-containerctl dist/mini-singbox-containerctl
+          cp scripts/uninstall.sh dist/uninstall.sh
+          cp packaging/systemd/mini-singbox.service dist/mini-singbox.service
+          cp packaging/systemd/mini-singbox-container.service dist/mini-singbox-container.service
+          cp packaging/openrc/mini-singbox dist/mini-singbox
+          cp packaging/external/mini-singbox-run dist/mini-singbox-run
+          cp release/minisign.pub dist/minisign.pub
+          chmod 0755 dist/bootstrap.sh dist/deploy.sh dist/mini-singboxctl \
+            dist/mini-singbox-containerctl dist/uninstall.sh dist/mini-singbox dist/mini-singbox-run
+      - name: Attest candidate binaries
+        id: provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/mini-singbox-linux-amd64
+            dist/mini-singbox-linux-arm64
+      - name: Assemble checksum manifest
+        env:
+          BUNDLE_PATH: ${{ steps.provenance.outputs.bundle-path }}
+        run: |
+          cp "$BUNDLE_PATH" dist/provenance.intoto.jsonl
+          (cd dist && find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' \
+            | LC_ALL=C sort | xargs sha256sum) > dist/SHA256SUMS
+      - name: Publish commit-specific prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          short_commit="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          release_tag="candidate-$short_commit"
+          if gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $release_tag already exists; refusing to replace immutable assets"
+            exit 0
+          fi
+          gh release create "$release_tag" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --prerelease \
+            --title "mini-singbox candidate $short_commit" \
+            --notes "Commit-specific CI candidate for Alpine and low-memory validation. This is not a stable signed release."

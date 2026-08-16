@@ -134,10 +134,13 @@ func (m *Manager) virtualization() string {
 	}
 	cgroups := strings.ToLower(m.readTrimmed(filepath.Join(m.options.ProcDirectory, "1/cgroup")) + "\n" +
 		m.readTrimmed(filepath.Join(m.options.ProcDirectory, "self/cgroup")))
-	for _, candidate := range []string{"docker", "podman", "lxc", "openvz"} {
+	for _, candidate := range []string{"docker", "podman", "containerd", "lxc", "openvz"} {
 		if strings.Contains(cgroups, candidate) {
 			return candidate
 		}
+	}
+	if strings.Contains(cgroups, "kubepods") {
+		return "kubernetes"
 	}
 	if m.pathExists(filepath.Join(m.options.ProcDirectory, "vz")) {
 		return "openvz"

@@ -1,0 +1,32 @@
+#!/sbin/openrc-run
+
+# These variables are consumed by openrc-run.sh.
+# shellcheck disable=SC2034
+name="mini-singbox"
+description="Minimal single-user sing-box server"
+command="/usr/local/bin/mini-singbox"
+command_args="run -c /etc/mini-singbox/config.json"
+command_user="mini-singbox:mini-singbox"
+supervisor="supervise-daemon"
+pidfile="/run/mini-singbox.pid"
+respawn_delay=2
+respawn_max=5
+respawn_period=30
+output_logger="logger -t mini-singbox"
+error_logger="logger -t mini-singbox"
+no_new_privs=yes
+retry="TERM/10/KILL/5"
+umask=0077
+
+export GOMAXPROCS="${GOMAXPROCS:-1}"
+export GOMEMLIMIT="${GOMEMLIMIT:-48MiB}"
+export GOGC="${GOGC:-70}"
+
+depend() {
+	need net
+	after firewall
+}
+
+start_pre() {
+	/usr/local/bin/mini-singbox check -c /etc/mini-singbox/config.json
+}

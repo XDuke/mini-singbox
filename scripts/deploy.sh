@@ -2,13 +2,18 @@
 set -eu
 
 SERVICE="mini-singbox.service"
+OPENRC_SERVICE="mini-singbox"
 SERVICE_USER="mini-singbox"
 INSTALL_PATH="/usr/local/bin/mini-singbox"
 CONTROL_PATH="/usr/local/bin/mini-singboxctl"
+CONTAINER_CONTROL_PATH="/usr/local/bin/mini-singbox-containerctl"
 UPDATE_PATH="/usr/local/bin/mini-singbox-update"
 UNINSTALL_PATH="/usr/local/bin/mini-singbox-uninstall"
+EXTERNAL_RUN_PATH="/usr/local/bin/mini-singbox-run"
 CONFIG_DIR="/etc/mini-singbox"
-UNIT_PATH="/etc/systemd/system/mini-singbox.service"
+SYSTEMD_UNIT_PATH="/etc/systemd/system/mini-singbox.service"
+OPENRC_UNIT_PATH="/etc/init.d/mini-singbox"
+EXTERNAL_PID_FILE="/run/mini-singbox/mini-singbox.pid"
 BACKUP_ROOT="/var/backups/mini-singbox"
 REPOSITORY="XDuke/mini-singbox"
 
@@ -27,6 +32,124 @@ fail() {
 
 command_exists() {
 	command -v "$1" >/dev/null 2>&1
+}
+
+running_in_container() {
+	[ -f /.dockerenv ] || [ -f /run/.containerenv ] || \
+		grep -Eqi '(docker|podman|lxc|openvz|containerd)' /proc/1/cgroup /proc/self/cgroup 2>/dev/null
+}
+
+detect_runtime() {
+	requested="${MINI_SINGBOX_RUNTIME:-auto}"
+	case "$requested" in
+		auto|systemd|openrc|external) ;;
+		*) fail "MINI_SINGBOX_RUNTIME must be auto, systemd, openrc, or external" ;;
+	esac
+	if [ "$requested" != auto ]; then
+		printf '%s\n' "$requested"
+		return 0
+	fi
+	if command_exists systemctl && [ -d /run/systemd/system ]; then
+		printf 'systemd\n'
+	elif running_in_container; then
+		printf 'external\n'
+	elif command_exists rc-service && command_exists rc-update && [ -d /run/openrc ]; then
+		printf 'openrc\n'
+	else
+		fail "no supported runtime detected; set MINI_SINGBOX_RUNTIME=external when another supervisor owns the process"
+	fi
+}
+
+external_pid() {
+	[ -f "$EXTERNAL_PID_FILE" ] && [ ! -L "$EXTERNAL_PID_FILE" ] || return 1
+	pid="$(cat "$EXTERNAL_PID_FILE" 2>/dev/null || true)"
+	case "$pid" in ''|*[!0-9]*|0) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null || return 1
+	printf '%s\n' "$pid"
+}
+
+runtime_is_active() {
+	case "$RUNTIME" in
+		systemd) systemctl is-active --quiet "$SERVICE" ;;
+		openrc) rc-service "$OPENRC_SERVICE" status >/dev/null 2>&1 ;;
+		external) external_pid >/dev/null ;;
+	esac
+}
+
+runtime_is_enabled() {
+	case "$RUNTIME" in
+		systemd) systemctl is-enabled --quiet "$SERVICE" ;;
+		openrc) rc-update show default 2>/dev/null | awk '$1 == "mini-singbox" { found = 1 } END { exit !found }' ;;
+		external) return 1 ;;
+	esac
+}
+
+runtime_main_pid() {
+	case "$RUNTIME" in
+		systemd) systemctl show "$SERVICE" -p MainPID --value ;;
+		openrc)
+			pgrep -o -u "$SERVICE_USER" mini-singbox 2>/dev/null || true
+			;;
+		external) external_pid || true ;;
+	esac
+}
+
+runtime_stop() {
+	case "$RUNTIME" in
+		systemd) systemctl stop "$SERVICE" ;;
+		openrc) rc-service "$OPENRC_SERVICE" stop ;;
+		external) return 0 ;;
+	esac
+}
+
+runtime_start() {
+	case "$RUNTIME" in
+		systemd) systemctl start "$SERVICE" ;;
+		openrc) rc-service "$OPENRC_SERVICE" start ;;
+		external) return 0 ;;
+	esac
+}
+
+runtime_restart() {
+	case "$RUNTIME" in
+		systemd) systemctl restart "$SERVICE" ;;
+		openrc) rc-service "$OPENRC_SERVICE" restart ;;
+		external) return 0 ;;
+	esac
+}
+
+runtime_enable() {
+	case "$RUNTIME" in
+		systemd) systemctl enable "$SERVICE" >/dev/null ;;
+		openrc) rc-update add "$OPENRC_SERVICE" default >/dev/null ;;
+		external) return 0 ;;
+	esac
+}
+
+runtime_disable() {
+	case "$RUNTIME" in
+		systemd) systemctl disable "$SERVICE" >/dev/null 2>&1 || true ;;
+		openrc) rc-update del "$OPENRC_SERVICE" default >/dev/null 2>&1 || true ;;
+		external) return 0 ;;
+	esac
+}
+
+runtime_reload() {
+	[ "$RUNTIME" = systemd ] && systemctl daemon-reload >/dev/null 2>&1 || true
+}
+
+runtime_recent_logs() {
+	case "$RUNTIME" in
+		systemd) journalctl -u "$SERVICE" -n 50 --no-pager >&2 || true ;;
+		openrc)
+			if command_exists logread; then
+				logread 2>/dev/null | grep 'mini-singbox' | tail -n 50 >&2 || true
+			else
+				rc-service "$OPENRC_SERVICE" status >&2 || true
+			fi
+			;;
+		external) warn "external runtime logs are owned by the surrounding supervisor" ;;
+	esac
 }
 
 prune_managed_backups() {
@@ -67,53 +190,87 @@ prune_managed_backups() {
 
 [ "$(id -u)" -eq 0 ] || fail "run as root (use sudo env ... ./scripts/deploy.sh)"
 [ "$(uname -s)" = "Linux" ] || fail "this deployer supports Linux only"
-command_exists systemctl || fail "systemd is required; OpenRC is not a supported deployment target"
-[ -d /run/systemd/system ] || fail "systemd is not running"
+RUNTIME="$(detect_runtime)"
+case "$RUNTIME" in
+	systemd) command_exists systemctl && [ -d /run/systemd/system ] || fail "systemd runtime was selected but is not running" ;;
+	openrc) command_exists rc-service && command_exists rc-update && [ -d /run/openrc ] || fail "OpenRC runtime was selected but OpenRC is not running" ;;
+	external) running_in_container || warn "external runtime selected outside a detected container; another supervisor must own the process" ;;
+esac
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
-SOURCE_DIR="$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd -P)"
-[ -f "$SOURCE_DIR/go.mod" ] || fail "go.mod not found next to the deployment script"
-[ -f "$SOURCE_DIR/packaging/systemd/mini-singbox.service" ] || fail "packaged systemd unit is missing"
-[ -f "$SOURCE_DIR/scripts/mini-singboxctl" ] || fail "control tool is missing"
-[ -f "$SOURCE_DIR/bootstrap.sh" ] || fail "update tool is missing"
-[ -f "$SOURCE_DIR/scripts/uninstall.sh" ] || fail "uninstall tool is missing"
-UPDATE_SOURCE="$SOURCE_DIR/bootstrap.sh"
-UNINSTALL_SOURCE="$SOURCE_DIR/scripts/uninstall.sh"
-
-UNIT_SOURCE="$SOURCE_DIR/packaging/systemd/mini-singbox.service"
-CONTROL_SOURCE="$SOURCE_DIR/scripts/mini-singboxctl"
-UNIT_PROFILE="full"
-if command_exists systemd-detect-virt && systemd-detect-virt --container --quiet; then
-	UNIT_SOURCE="$SOURCE_DIR/packaging/systemd/mini-singbox-container.service"
-	UNIT_PROFILE="container-compatible"
-	[ -f "$UNIT_SOURCE" ] || fail "container-compatible systemd unit is missing"
-	warn "container virtualization detected; using the container-compatible systemd sandbox"
+BUNDLE_DIR="${MINI_SINGBOX_BUNDLE_DIR:-}"
+VERIFY_BUNDLE_FILES=0
+if [ -n "$BUNDLE_DIR" ]; then
+	SOURCE_DIR="$(CDPATH='' cd -- "$BUNDLE_DIR" && pwd -P)"
+	CONTROL_SOURCE="$SOURCE_DIR/mini-singboxctl"
+	CONTAINER_CONTROL_SOURCE="$SOURCE_DIR/mini-singbox-containerctl"
+	UPDATE_SOURCE="$SOURCE_DIR/bootstrap.sh"
+	UNINSTALL_SOURCE="$SOURCE_DIR/uninstall.sh"
+	SYSTEMD_UNIT_SOURCE="$SOURCE_DIR/mini-singbox.service"
+	SYSTEMD_CONTAINER_UNIT_SOURCE="$SOURCE_DIR/mini-singbox-container.service"
+	OPENRC_UNIT_SOURCE="$SOURCE_DIR/mini-singbox"
+	EXTERNAL_RUN_SOURCE="$SOURCE_DIR/mini-singbox-run"
+	BUNDLE_MANIFEST="$SOURCE_DIR/SHA256SUMS"
+	SOURCE_COMMIT="${MINI_SINGBOX_SOURCE_COMMIT:-}"
+	RELEASE_TAG="${MINI_SINGBOX_RELEASE_TAG:-}"
+	VERIFY_BUNDLE_FILES=1
+else
+	SOURCE_DIR="$(CDPATH='' cd -- "$SCRIPT_DIR/.." && pwd -P)"
+	[ -f "$SOURCE_DIR/go.mod" ] || fail "go.mod not found next to the deployment script"
+	CONTROL_SOURCE="$SOURCE_DIR/scripts/mini-singboxctl"
+	CONTAINER_CONTROL_SOURCE="$SOURCE_DIR/scripts/mini-singbox-containerctl"
+	UPDATE_SOURCE="$SOURCE_DIR/bootstrap.sh"
+	UNINSTALL_SOURCE="$SOURCE_DIR/scripts/uninstall.sh"
+	SYSTEMD_UNIT_SOURCE="$SOURCE_DIR/packaging/systemd/mini-singbox.service"
+	SYSTEMD_CONTAINER_UNIT_SOURCE="$SOURCE_DIR/packaging/systemd/mini-singbox-container.service"
+	OPENRC_UNIT_SOURCE="$SOURCE_DIR/packaging/openrc/mini-singbox"
+	EXTERNAL_RUN_SOURCE="$SOURCE_DIR/packaging/external/mini-singbox-run"
+	command_exists git || fail "git is required when deploy.sh is run from a source checkout"
+	git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "run this script from a Git checkout"
+	[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ] || \
+		fail "tracked source files are modified; commit or restore them before deployment"
+	SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+	SHORT_COMMIT="$(printf '%s' "$SOURCE_COMMIT" | cut -c1-12)"
+	EXACT_RELEASE_TAG="$(git -C "$SOURCE_DIR" tag --points-at "$SOURCE_COMMIT" | \
+		grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' | \
+		sort -V | tail -n 1 || true)"
+	RELEASE_TAG="${MINI_SINGBOX_RELEASE_TAG:-${EXACT_RELEASE_TAG:-candidate-$SHORT_COMMIT}}"
 fi
 
-if ! command_exists git; then
-	fail "git is required; clone the repository before running this script"
-fi
-git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || fail "run this script from a Git checkout"
-[ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)" ] || \
-	fail "tracked source files are modified; commit or restore them before deployment"
-
-SOURCE_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
+printf '%s\n' "$SOURCE_COMMIT" | grep -Eq '^[0-9a-f]{40}$' || fail "source commit must be a full hexadecimal Git commit"
 SHORT_COMMIT="$(printf '%s' "$SOURCE_COMMIT" | cut -c1-12)"
-EXACT_RELEASE_TAG="$(git -C "$SOURCE_DIR" tag --points-at "$SOURCE_COMMIT" | \
-	grep -E '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$' | \
-	sort -V | tail -n 1 || true)"
-RELEASE_TAG="${MINI_SINGBOX_RELEASE_TAG:-${EXACT_RELEASE_TAG:-candidate-$SHORT_COMMIT}}"
 MINISIGN_PUBLIC_KEY="${MINI_SINGBOX_MINISIGN_PUBKEY_FILE:-$SOURCE_DIR/release/minisign.pub}"
 SIGNED_RELEASE=0
 case "$RELEASE_TAG" in
-	v[0-9]*.[0-9]*.[0-9]*)
-		[ "$RELEASE_TAG" = "$EXACT_RELEASE_TAG" ] || \
-			fail "release tag $RELEASE_TAG does not point at source commit $SOURCE_COMMIT"
-		SIGNED_RELEASE=1
-		;;
+	v[0-9]*.[0-9]*.[0-9]*) SIGNED_RELEASE=1 ;;
 	"candidate-$SHORT_COMMIT") ;;
-	*) fail "release tag must be the exact source tag or candidate-$SHORT_COMMIT" ;;
+	*) fail "release tag must be a stable version or candidate-$SHORT_COMMIT" ;;
 esac
+if [ -z "$BUNDLE_DIR" ] && [ "$SIGNED_RELEASE" -eq 1 ]; then
+	[ "$RELEASE_TAG" = "$EXACT_RELEASE_TAG" ] || \
+		fail "release tag $RELEASE_TAG does not point at source commit $SOURCE_COMMIT"
+fi
+if [ -n "$BUNDLE_DIR" ]; then
+	[ -f "$BUNDLE_MANIFEST" ] && [ ! -L "$BUNDLE_MANIFEST" ] || fail "bundle checksum manifest is missing or unsafe"
+fi
+
+case "$RUNTIME" in
+	systemd)
+		UNIT_SOURCE="$SYSTEMD_UNIT_SOURCE"
+		UNIT_PATH="$SYSTEMD_UNIT_PATH"
+		UNIT_PROFILE="full"
+		if command_exists systemd-detect-virt && systemd-detect-virt --container --quiet; then
+			UNIT_SOURCE="$SYSTEMD_CONTAINER_UNIT_SOURCE"
+			UNIT_PROFILE="container-compatible"
+			warn "container virtualization detected; using the container-compatible systemd sandbox"
+		fi
+		;;
+	openrc) UNIT_SOURCE="$OPENRC_UNIT_SOURCE"; UNIT_PATH="$OPENRC_UNIT_PATH"; UNIT_PROFILE="openrc" ;;
+	external) UNIT_SOURCE="$EXTERNAL_RUN_SOURCE"; UNIT_PATH="$EXTERNAL_RUN_PATH"; UNIT_PROFILE="external-supervisor" ;;
+esac
+for required_source in "$CONTROL_SOURCE" "$CONTAINER_CONTROL_SOURCE" "$UPDATE_SOURCE" "$UNINSTALL_SOURCE" "$UNIT_SOURCE" "$EXTERNAL_RUN_SOURCE"; do
+	[ -f "$required_source" ] && [ ! -L "$required_source" ] || fail "required deployment asset is missing or unsafe: $required_source"
+done
 
 PROTOCOLS="${MINI_SINGBOX_PROTOCOLS:-reality,hy2,anytls}"
 LISTEN_ADDRESS="${MINI_SINGBOX_LISTEN:-::}"
@@ -136,6 +293,13 @@ BACKUP_KEEP="${MINI_SINGBOX_BACKUP_KEEP:-5}"
 IP_FAMILY="${MINI_SINGBOX_IP_FAMILY:-auto}"
 REALITY_CANDIDATES="${MINI_SINGBOX_REALITY_CANDIDATES:-www.microsoft.com,www.amazon.com,www.mozilla.org,www.cloudflare.com}"
 NEEDS_GENERATION=0
+
+if [ "$RUNTIME" = external ]; then
+	if [ "$AUTO_TUNE" = "1" ] && [ "${MINI_SINGBOX_AUTO_TUNE+x}" = "x" ]; then
+		warn "external runtime cannot safely own host TCP sysctls; MINI_SINGBOX_AUTO_TUNE=1 was ignored"
+	fi
+	AUTO_TUNE=0
+fi
 
 case "$PROTOCOLS" in
 	*[[:space:]]*) fail "MINI_SINGBOX_PROTOCOLS must not contain whitespace" ;;
@@ -173,6 +337,15 @@ fi
 if [ ! -f "$CONFIG_DIR/config.json" ] || [ "$REGENERATE" = "1" ]; then
 	NEEDS_GENERATION=1
 fi
+if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
+	EXISTING_RUNTIME="$(awk -F= '$1 == "runtime" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+	if [ -z "$EXISTING_RUNTIME" ] && grep -q '^systemd_profile=' "$CONFIG_DIR/deployment-info.txt"; then
+		EXISTING_RUNTIME=systemd
+	fi
+	if [ -n "$EXISTING_RUNTIME" ] && [ "$EXISTING_RUNTIME" != "$RUNTIME" ]; then
+		fail "existing installation uses $EXISTING_RUNTIME; refusing an implicit runtime migration to $RUNTIME"
+	fi
+fi
 
 case "$(uname -m)" in
 	x86_64|amd64)
@@ -207,6 +380,9 @@ if command_exists apt-get; then
 	command_exists jq || missing_packages="$missing_packages jq"
 	command_exists file || missing_packages="$missing_packages file"
 	command_exists readelf || missing_packages="$missing_packages binutils"
+	if [ "$RUNTIME" = openrc ]; then
+		command_exists logger || missing_packages="$missing_packages logger"
+	fi
 	if [ "$SIGNED_RELEASE" -eq 1 ]; then
 		command_exists minisign || missing_packages="$missing_packages minisign"
 	fi
@@ -219,14 +395,46 @@ if command_exists apt-get; then
 		# shellcheck disable=SC2086
 		apt-get install -y --no-install-recommends ca-certificates $missing_packages
 	fi
+elif command_exists apk; then
+	missing_packages=""
+	command_exists curl || missing_packages="$missing_packages curl"
+	if ! command_exists sha256sum || ! command_exists timeout; then
+		missing_packages="$missing_packages coreutils"
+	fi
+	command_exists runuser || missing_packages="$missing_packages runuser"
+	command_exists find || missing_packages="$missing_packages findutils"
+	if ! command_exists ss || ! command_exists ip; then
+		missing_packages="$missing_packages iproute2"
+	fi
+	command_exists useradd || missing_packages="$missing_packages shadow"
+	command_exists ps || missing_packages="$missing_packages procps-ng"
+	command_exists pgrep || missing_packages="$missing_packages procps-ng"
+	command_exists openssl || missing_packages="$missing_packages openssl"
+	command_exists qrencode || missing_packages="$missing_packages qrencode"
+	command_exists jq || missing_packages="$missing_packages jq"
+	command_exists file || missing_packages="$missing_packages file"
+	command_exists readelf || missing_packages="$missing_packages binutils"
+	if [ "$RUNTIME" = openrc ]; then
+		command_exists logger || missing_packages="$missing_packages logger"
+	fi
+	if [ "$SIGNED_RELEASE" -eq 1 ]; then
+		command_exists minisign || missing_packages="$missing_packages minisign"
+	fi
+	if [ -n "$missing_packages" ] || [ ! -e /etc/ssl/certs/ca-certificates.crt ]; then
+		log "Installing required Alpine packages"
+		# ca-certificates is intentionally installed even when the bundle exists.
+		# missing_packages contains only the fixed package names assigned above.
+		# shellcheck disable=SC2086
+		apk add --no-cache ca-certificates $missing_packages
+	fi
 else
-	required_commands="curl sha256sum runuser ss ip useradd groupadd usermod getent ps openssl qrencode jq timeout file readelf"
+	required_commands="curl sha256sum runuser find ss ip useradd groupadd usermod ps pgrep openssl qrencode jq timeout file readelf"
 	if [ "$SIGNED_RELEASE" -eq 1 ]; then
 		required_commands="$required_commands minisign"
 	fi
 	for required_command in $required_commands; do
 		command_exists "$required_command" || \
-			fail "missing $required_command; automatic package installation is supported only on Debian/Ubuntu"
+			fail "missing $required_command; automatic package installation is supported only with apt or apk"
 	done
 fi
 
@@ -459,9 +667,9 @@ port_has_foreign_listener() {
 preflight_requested_ports() {
 	owner_pid="0"
 	current_service_active=0
-	if systemctl is-active --quiet "$SERVICE"; then
+	if runtime_is_active; then
 		current_service_active=1
-		candidate_pid="$(systemctl show "$SERVICE" -p MainPID --value)"
+		candidate_pid="$(runtime_main_pid)"
 		case "$candidate_pid" in
 			''|*[!0-9]*) ;;
 			*) [ "$candidate_pid" -gt 0 ] && owner_pid="$candidate_pid" ;;
@@ -620,6 +828,7 @@ DEPLOYMENT_STARTED=0
 DEPLOYMENT_SUCCEEDED=0
 HAD_BINARY=0
 HAD_CONTROL=0
+HAD_CONTAINER_CONTROL=0
 HAD_UPDATE=0
 HAD_UNINSTALL=0
 HAD_UNIT=0
@@ -632,7 +841,7 @@ BACKUP_DIR=""
 
 rollback() {
 	warn "deployment failed after installation began; restoring the previous state"
-	systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+	runtime_stop >/dev/null 2>&1 || true
 
 	if [ "$HAD_BINARY" -eq 1 ]; then
 		install -m 0755 "$BACKUP_DIR/mini-singbox" "$INSTALL_PATH"
@@ -643,6 +852,11 @@ rollback() {
 		install -m 0755 "$BACKUP_DIR/mini-singboxctl" "$CONTROL_PATH"
 	else
 		rm -f "$CONTROL_PATH"
+	fi
+	if [ "$HAD_CONTAINER_CONTROL" -eq 1 ]; then
+		install -m 0755 "$BACKUP_DIR/mini-singbox-containerctl" "$CONTAINER_CONTROL_PATH"
+	else
+		rm -f "$CONTAINER_CONTROL_PATH"
 	fi
 	if [ "$HAD_UPDATE" -eq 1 ]; then
 		install -m 0755 "$BACKUP_DIR/mini-singbox-update" "$UPDATE_PATH"
@@ -656,7 +870,8 @@ rollback() {
 	fi
 
 	if [ "$HAD_UNIT" -eq 1 ]; then
-		install -m 0644 "$BACKUP_DIR/mini-singbox.service" "$UNIT_PATH"
+		case "$RUNTIME" in systemd) unit_mode=0644 ;; *) unit_mode=0755 ;; esac
+		install -m "$unit_mode" "$BACKUP_DIR/runtime-unit" "$UNIT_PATH"
 	else
 		rm -f "$UNIT_PATH"
 	fi
@@ -689,14 +904,14 @@ rollback() {
 		fi
 	fi
 
-	systemctl daemon-reload >/dev/null 2>&1 || true
+	runtime_reload
 	if [ "$WAS_ENABLED" -eq 1 ] && [ "$HAD_UNIT" -eq 1 ]; then
-		systemctl enable "$SERVICE" >/dev/null 2>&1 || true
+		runtime_enable >/dev/null 2>&1 || true
 	else
-		systemctl disable "$SERVICE" >/dev/null 2>&1 || true
+		runtime_disable
 	fi
 	if [ "$WAS_ACTIVE" -eq 1 ] && [ "$HAD_UNIT" -eq 1 ] && [ "$HAD_BINARY" -eq 1 ]; then
-		systemctl start "$SERVICE" >/dev/null 2>&1 || true
+		runtime_start >/dev/null 2>&1 || true
 	fi
 	warn "rollback finished; backup retained at $BACKUP_DIR"
 }
@@ -759,18 +974,42 @@ verify_signed_checkout_file() {
 	[ "$actual" = "$expected" ] || fail "signed checkout verification failed for $manifest_name"
 }
 
-if [ "$SIGNED_RELEASE" -eq 1 ]; then
-	verify_signed_checkout_file "$SOURCE_DIR/scripts/deploy.sh" scripts/deploy.sh
-	verify_signed_checkout_file "$CONTROL_SOURCE" scripts/mini-singboxctl
+if [ "$SIGNED_RELEASE" -eq 1 ] || [ "$VERIFY_BUNDLE_FILES" -eq 1 ]; then
+	if [ "$VERIFY_BUNDLE_FILES" -eq 1 ]; then
+		deploy_manifest_name=deploy.sh
+		control_manifest_name=mini-singboxctl
+		container_control_manifest_name=mini-singbox-containerctl
+		uninstall_manifest_name=uninstall.sh
+		openrc_manifest_name=mini-singbox
+		external_manifest_name=mini-singbox-run
+		key_manifest_name=minisign.pub
+	else
+		deploy_manifest_name=scripts/deploy.sh
+		control_manifest_name=scripts/mini-singboxctl
+		container_control_manifest_name=scripts/mini-singbox-containerctl
+		uninstall_manifest_name=scripts/uninstall.sh
+		openrc_manifest_name=packaging/openrc/mini-singbox
+		external_manifest_name=packaging/external/mini-singbox-run
+		key_manifest_name=release/minisign.pub
+	fi
+	verify_signed_checkout_file "$SCRIPT_DIR/deploy.sh" "$deploy_manifest_name"
+	verify_signed_checkout_file "$CONTROL_SOURCE" "$control_manifest_name"
+	verify_signed_checkout_file "$CONTAINER_CONTROL_SOURCE" "$container_control_manifest_name"
 	verify_signed_checkout_file "$UPDATE_SOURCE" bootstrap.sh
-	verify_signed_checkout_file "$UNINSTALL_SOURCE" scripts/uninstall.sh
+	verify_signed_checkout_file "$UNINSTALL_SOURCE" "$uninstall_manifest_name"
 	case "$UNIT_PROFILE" in
 		full) unit_manifest_name=packaging/systemd/mini-singbox.service ;;
 		container-compatible) unit_manifest_name=packaging/systemd/mini-singbox-container.service ;;
-		*) fail "internal systemd profile error: $UNIT_PROFILE" ;;
+		openrc) unit_manifest_name="$openrc_manifest_name" ;;
+		external-supervisor) unit_manifest_name="$external_manifest_name" ;;
+		*) fail "internal runtime profile error: $UNIT_PROFILE" ;;
 	esac
+	if [ "$VERIFY_BUNDLE_FILES" -eq 1 ]; then
+		unit_manifest_name="$(basename "$UNIT_SOURCE")"
+	fi
 	verify_signed_checkout_file "$UNIT_SOURCE" "$unit_manifest_name"
-	verify_signed_checkout_file "$MINISIGN_PUBLIC_KEY" release/minisign.pub
+	verify_signed_checkout_file "$EXTERNAL_RUN_SOURCE" "$external_manifest_name"
+	verify_signed_checkout_file "$MINISIGN_PUBLIC_KEY" "$key_manifest_name"
 fi
 
 EXPECTED_SHA256="$(awk -v asset="$ASSET" '$2 == asset || $2 == "*" asset { print $1 }' "$CHECKSUMS")"
@@ -800,13 +1039,21 @@ printf '%s\n' "$VERSION_OUTPUT" | grep -Fxq "target linux/$ARCH" || \
 printf '%s\n' "$VERSION_OUTPUT" | grep -Fxq 'dirty_build false' || \
 	fail "downloaded binary is marked dirty"
 
-if ! getent group "$SERVICE_USER" >/dev/null 2>&1; then
+group_exists() {
+	if command_exists getent; then
+		getent group "$1" >/dev/null 2>&1
+	else
+		awk -F: -v group="$1" '$1 == group { found = 1 } END { exit !found }' /etc/group
+	fi
+}
+
+if ! group_exists "$SERVICE_USER"; then
 	log "Creating dedicated service group"
 	groupadd --system "$SERVICE_USER"
 fi
 if ! id "$SERVICE_USER" >/dev/null 2>&1; then
 	log "Creating dedicated service user"
-	NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || printf '/usr/sbin/nologin')"
+	NOLOGIN_SHELL="$(command -v nologin 2>/dev/null || printf '/sbin/nologin')"
 	useradd --system --gid "$SERVICE_USER" --home-dir /nonexistent --shell "$NOLOGIN_SHELL" "$SERVICE_USER"
 elif [ "$(id -gn "$SERVICE_USER")" != "$SERVICE_USER" ]; then
 	log "Assigning the existing service user to its dedicated primary group"
@@ -888,6 +1135,10 @@ if [ -f "$CONTROL_PATH" ]; then
 	HAD_CONTROL=1
 	cp -a "$CONTROL_PATH" "$BACKUP_DIR/mini-singboxctl"
 fi
+if [ -f "$CONTAINER_CONTROL_PATH" ]; then
+	HAD_CONTAINER_CONTROL=1
+	cp -a "$CONTAINER_CONTROL_PATH" "$BACKUP_DIR/mini-singbox-containerctl"
+fi
 if [ -f "$UPDATE_PATH" ]; then
 	HAD_UPDATE=1
 	cp -a "$UPDATE_PATH" "$BACKUP_DIR/mini-singbox-update"
@@ -898,27 +1149,38 @@ if [ -f "$UNINSTALL_PATH" ]; then
 fi
 if [ -f "$UNIT_PATH" ]; then
 	HAD_UNIT=1
-	cp -a "$UNIT_PATH" "$BACKUP_DIR/mini-singbox.service"
+	cp -a "$UNIT_PATH" "$BACKUP_DIR/runtime-unit"
 fi
 if [ -d "$CONFIG_DIR" ]; then
 	HAD_CONFIG=1
 	cp -a "$CONFIG_DIR" "$BACKUP_DIR/config"
 fi
-if systemctl is-active --quiet "$SERVICE"; then
+if runtime_is_active; then
 	WAS_ACTIVE=1
 fi
-if systemctl is-enabled --quiet "$SERVICE"; then
+if runtime_is_enabled; then
 	WAS_ENABLED=1
 fi
 
+if [ "$RUNTIME" = external ] && [ "$WAS_ACTIVE" -eq 1 ]; then
+	fail "external process is active; stop the surrounding supervisor before upgrading"
+fi
+
 DEPLOYMENT_STARTED=1
-log "Installing the binary, on-demand tools, configuration, and hardened systemd unit"
-systemctl stop "$SERVICE" >/dev/null 2>&1 || true
+log "Installing the binary, on-demand tools, configuration, and $RUNTIME runtime"
+runtime_stop >/dev/null 2>&1 || true
 install -m 0755 "$BUILD_BINARY" "$INSTALL_PATH"
 install -m 0755 "$CONTROL_SOURCE" "$CONTROL_PATH"
+install -m 0755 "$CONTAINER_CONTROL_SOURCE" "$CONTAINER_CONTROL_PATH"
 install -m 0755 "$UPDATE_SOURCE" "$UPDATE_PATH"
 install -m 0755 "$UNINSTALL_SOURCE" "$UNINSTALL_PATH"
-install -m 0644 "$UNIT_SOURCE" "$UNIT_PATH"
+case "$RUNTIME" in
+	systemd) install -m 0644 "$UNIT_SOURCE" "$UNIT_PATH" ;;
+	openrc|external) install -m 0755 "$UNIT_SOURCE" "$UNIT_PATH" ;;
+esac
+if [ "$RUNTIME" = external ]; then
+	install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /run/mini-singbox
+fi
 
 if [ "$CONFIG_REPLACED" -eq 1 ]; then
 	[ "$CONFIG_DIR" = "/etc/mini-singbox" ] || fail "unsafe config path"
@@ -963,7 +1225,8 @@ CURRENT_PUBLIC_ADDRESS="$(jq -r '.public_address // "unknown"' "$CONFIG_DIR/clie
 {
 	printf 'source_commit=%s\n' "$SOURCE_COMMIT"
 	printf 'protocols=%s\n' "$CURRENT_PROTOCOLS"
-	printf 'systemd_profile=%s\n' "$UNIT_PROFILE"
+	printf 'runtime=%s\n' "$RUNTIME"
+	printf 'runtime_profile=%s\n' "$UNIT_PROFILE"
 	printf 'public_address=%s\n' "$CURRENT_PUBLIC_ADDRESS"
 	if jq -e '.vless_reality' "$CONFIG_DIR/config.json" >/dev/null; then
 		printf 'reality_listen_port=%s/tcp\n' "$(jq -r '.vless_reality.port' "$CONFIG_DIR/config.json")"
@@ -986,37 +1249,44 @@ install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
 DEPLOYMENT_INFO_REWRITTEN=1
 
 runuser -u "$SERVICE_USER" -- "$INSTALL_PATH" check -c "$CONFIG_DIR/config.json"
-systemctl daemon-reload
-systemctl enable "$SERVICE" >/dev/null
-systemctl restart "$SERVICE"
+LISTENER_PROTOCOLS="$CURRENT_PROTOCOLS"
+MAIN_PID=""
+PROCESS_USER="$SERVICE_USER"
+if [ "$RUNTIME" != external ]; then
+	runtime_reload
+	runtime_enable
+	runtime_start
 
-attempt=0
-while [ "$attempt" -lt 15 ]; do
-	if systemctl is-active --quiet "$SERVICE"; then
-		break
+	attempt=0
+	while [ "$attempt" -lt 15 ]; do
+		if runtime_is_active; then
+			break
+		fi
+		attempt=$((attempt + 1))
+		sleep 1
+	done
+
+	if ! runtime_is_active; then
+		runtime_recent_logs
+		fail "$RUNTIME service did not become active"
 	fi
-	attempt=$((attempt + 1))
-	sleep 1
-done
 
-if ! systemctl is-active --quiet "$SERVICE"; then
-	journalctl -u "$SERVICE" -n 50 --no-pager >&2 || true
-	fail "service did not become active"
+	# Catch immediate post-start failures instead of accepting a transient active state.
+	sleep 5
+	if ! runtime_is_active; then
+		runtime_recent_logs
+		fail "$RUNTIME service exited during the five-second startup observation"
+	fi
+
+	MAIN_PID="$(runtime_main_pid)"
+	case "$MAIN_PID" in
+		''|*[!0-9]*|0) fail "$RUNTIME did not report a valid mini-singbox PID" ;;
+	esac
+	PROCESS_USER="$(ps -o user= -p "$MAIN_PID" | awk '{$1=$1; print}')"
+	[ "$PROCESS_USER" = "$SERVICE_USER" ] || fail "service is running as unexpected user $PROCESS_USER"
+else
+	log "External runtime prepared; the surrounding platform must launch $EXTERNAL_RUN_PATH"
 fi
-
-# Catch immediate post-start failures instead of accepting a transient active state.
-sleep 5
-if ! systemctl is-active --quiet "$SERVICE"; then
-	journalctl -u "$SERVICE" -n 50 --no-pager >&2 || true
-	fail "service exited during the five-second startup observation"
-fi
-
-MAIN_PID="$(systemctl show "$SERVICE" -p MainPID --value)"
-case "$MAIN_PID" in
-	''|*[!0-9]*|0) fail "systemd did not report a valid main PID" ;;
-esac
-PROCESS_USER="$(ps -o user= -p "$MAIN_PID" | awk '{$1=$1; print}')"
-[ "$PROCESS_USER" = "$SERVICE_USER" ] || fail "service is running as unexpected user $PROCESS_USER"
 
 verify_listener() {
 	transport="$1"
@@ -1034,22 +1304,23 @@ verify_listener() {
 		$4 ~ (":" port "$") { print; found = 1 }
 		END { if (!found) exit 1 }
 	')"; then
-		journalctl -u "$SERVICE" -n 50 --no-pager >&2 || true
+		runtime_recent_logs
 		fail "$label is not listening on $transport/$port"
 	fi
 	printf '%-10s %s/%s  %s\n' "$label" "$transport" "$port" "$matched_socket"
 }
 
-log "Verifying listening sockets"
-LISTENER_PROTOCOLS="$CURRENT_PROTOCOLS"
-if jq -e '.vless_reality' "$CONFIG_DIR/config.json" >/dev/null; then
-	verify_listener tcp "$(jq -r '.vless_reality.port' "$CONFIG_DIR/config.json")" Reality
-fi
-if jq -e '.hysteria2' "$CONFIG_DIR/config.json" >/dev/null; then
-	verify_listener udp "$(jq -r '.hysteria2.port' "$CONFIG_DIR/config.json")" Hysteria2
-fi
-if jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null; then
-	verify_listener tcp "$(jq -r '.anytls.port' "$CONFIG_DIR/config.json")" AnyTLS
+if [ "$RUNTIME" != external ]; then
+	log "Verifying listening sockets"
+	if jq -e '.vless_reality' "$CONFIG_DIR/config.json" >/dev/null; then
+		verify_listener tcp "$(jq -r '.vless_reality.port' "$CONFIG_DIR/config.json")" Reality
+	fi
+	if jq -e '.hysteria2' "$CONFIG_DIR/config.json" >/dev/null; then
+		verify_listener udp "$(jq -r '.hysteria2.port' "$CONFIG_DIR/config.json")" Hysteria2
+	fi
+	if jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null; then
+		verify_listener tcp "$(jq -r '.anytls.port' "$CONFIG_DIR/config.json")" AnyTLS
+	fi
 fi
 
 HAS_SHARE_LINKS=0
@@ -1116,8 +1387,13 @@ fi
 DEPLOYMENT_SUCCEEDED=1
 log "Deployment succeeded"
 printf 'source commit: %s\n' "$SOURCE_COMMIT"
-printf 'service:       active as %s (PID %s)\n' "$PROCESS_USER" "$MAIN_PID"
-printf 'unit profile:  %s\n' "$UNIT_PROFILE"
+if [ "$RUNTIME" = external ]; then
+	printf 'service:       prepared for an external supervisor; not started automatically\n'
+	printf 'start command: %s\n' "$EXTERNAL_RUN_PATH"
+else
+	printf 'service:       active as %s (PID %s)\n' "$PROCESS_USER" "$MAIN_PID"
+fi
+printf 'runtime:       %s (%s)\n' "$RUNTIME" "$UNIT_PROFILE"
 printf 'configuration: %s/config.json\n' "$CONFIG_DIR"
 printf 'client info:   %s/client-info.json (sensitive)\n' "$CONFIG_DIR"
 printf 'control:       sudo mini-singboxctl status\n'
@@ -1148,7 +1424,11 @@ if [ -f "$CONFIG_DIR/deployment-info.txt" ]; then
 	printf 'deployment:    %s/deployment-info.txt\n' "$CONFIG_DIR"
 fi
 printf 'backup:        %s\n' "$BACKUP_DIR"
-printf 'logs:          sudo mini-singboxctl logs 100\n'
+if [ "$RUNTIME" = external ]; then
+	printf 'logs:          use the surrounding platform or supervisor\n'
+else
+	printf 'logs:          sudo mini-singboxctl logs 100\n'
+fi
 
 printf '\nFirewall/security-group ports are not changed by this script.\n'
 printf 'Open only the enabled protocol ports: Reality TCP, Hysteria2 UDP, AnyTLS TCP.\n'

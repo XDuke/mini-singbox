@@ -1,0 +1,59 @@
+#!/bin/sh
+set -eu
+
+BINARY="${MINI_SINGBOX_BINARY:-/usr/local/bin/mini-singbox}"
+CONFIG="${MINI_SINGBOX_CONFIG:-/etc/mini-singbox/config.json}"
+RUN_DIR="${MINI_SINGBOX_RUN_DIR:-/run/mini-singbox}"
+PID_FILE="$RUN_DIR/mini-singbox.pid"
+SERVICE_USER="${MINI_SINGBOX_SERVICE_USER:-mini-singbox}"
+child_pid=""
+
+fail() {
+	printf 'mini-singbox external runner: %s\n' "$*" >&2
+	exit 1
+}
+
+if [ "$(id -u)" -eq 0 ]; then
+	command -v runuser >/dev/null 2>&1 || fail "runuser is required to drop root privileges"
+	exec runuser -u "$SERVICE_USER" -- "$0" "$@"
+fi
+[ "$(id -un)" = "$SERVICE_USER" ] || fail "run as $SERVICE_USER or root"
+
+cleanup() {
+	status=$?
+	trap - EXIT HUP INT TERM
+	if [ -n "$child_pid" ] && [ -f "$PID_FILE" ]; then
+		recorded="$(cat "$PID_FILE" 2>/dev/null || true)"
+		[ "$recorded" = "$child_pid" ] && rm -f -- "$PID_FILE"
+	fi
+	exit "$status"
+}
+
+forward_signal() {
+	[ -n "$child_pid" ] || return 0
+	kill -TERM "$child_pid" 2>/dev/null || true
+}
+
+[ -x "$BINARY" ] || fail "binary is not executable: $BINARY"
+[ -f "$CONFIG" ] && [ ! -L "$CONFIG" ] || fail "configuration is missing or unsafe: $CONFIG"
+[ -d "$RUN_DIR" ] && [ ! -L "$RUN_DIR" ] || fail "run directory is missing or unsafe: $RUN_DIR"
+
+if [ -f "$PID_FILE" ]; then
+	previous="$(cat "$PID_FILE" 2>/dev/null || true)"
+	case "$previous" in
+		''|*[!0-9]*) ;;
+		*) kill -0 "$previous" 2>/dev/null && fail "another instance is active as PID $previous" ;;
+	esac
+	rm -f -- "$PID_FILE"
+fi
+
+export GOMAXPROCS="${GOMAXPROCS:-1}"
+export GOMEMLIMIT="${GOMEMLIMIT:-48MiB}"
+export GOGC="${GOGC:-70}"
+
+trap cleanup EXIT
+trap forward_signal HUP INT TERM
+"$BINARY" run -c "$CONFIG" &
+child_pid=$!
+printf '%s\n' "$child_pid" > "$PID_FILE"
+wait "$child_pid"

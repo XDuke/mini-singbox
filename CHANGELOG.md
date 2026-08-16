@@ -5,7 +5,40 @@ Semantic Versioning.
 
 ## Unreleased
 
-No changes yet.
+### Added
+
+- Added native Alpine Linux 3.23/3.24 installation with an OpenRC
+  `supervise-daemon` service, non-root identity, configuration pre-check,
+  bounded respawn, startup observation, listener checks, and uninstall support.
+- Added an explicit external-supervisor runtime for provider containers. It
+  installs a privilege-dropping foreground runner without falsely claiming
+  inner-container autostart or ownership of outer logs.
+- Added a rootless Podman/Docker lifecycle helper with network-disabled
+  generation and checks, hardened startup, transactional digest upgrades,
+  image rollback, QR display, certificate renewal, and credential-preserving
+  uninstall.
+- Added Alpine external/OpenRC and rootless Podman CI acceptance gates plus
+  multi-architecture GHCR publication and image provenance for formal releases.
+
+### Changed
+
+- Reworked bootstrap into an asset-first path for v1.2.0 and newer: stable
+  releases verify the independently pinned minisign key, signed checksum
+  manifest, release metadata, and each deployment asset without cloning Git on
+  the target. A narrow verified legacy fallback remains for v1.1.1.
+- Generalized deployment, status, logs, certificate renewal, rollback, update,
+  and uninstall transactions across systemd, OpenRC, and external runtimes.
+- Formal release bundles now include OpenRC/external/container helpers,
+  release metadata, and the immutable OCI digest alongside binary checksums,
+  SBOM, and provenance.
+
+### Security
+
+- Container/external deployments never apply host TCP sysctls; direct and
+  control-tool tuning paths reject known container virtualization.
+- OpenRC uses a root-owned PID file, `no_new_privs`, restrictive umask, and an
+  unprivileged service user. OCI runtime defaults remain read-only, capability
+  free, `no-new-privileges`, 64-PID and 128-MiB bounded.
 
 ## v1.1.1 - 2026-08-16
 

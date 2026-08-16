@@ -31,9 +31,29 @@ server certificate and keeps certificate verification enabled. Re-import that
 AnyTLS outbound after upgrading; Reality and Hysteria2 clients do not need to
 be re-imported during an ordinary upgrade.
 
-The supported host service manager is now systemd. The incomplete OpenRC path
-and duplicate legacy installer are no longer release assets. Configuration,
-key, certificate, and delivery paths must not be symbolic links.
+In v1.1.1 the supported host service manager is systemd; the incomplete old
+OpenRC path was deliberately not a release asset. Configuration, key,
+certificate, and delivery paths must not be symbolic links.
+
+`v1.2.0` adds a newly implemented and CI-tested OpenRC backend for Alpine Linux,
+an external-supervisor backend for provider containers, and a separate rootless
+Podman/Docker lifecycle helper. This is not a restoration of the old incomplete
+installer: all three paths share the current signed assets, strict config,
+transactional credentials, control commands, architecture checks, and release
+identity.
+
+The selected host runtime is written as `runtime=systemd`, `runtime=openrc`, or
+`runtime=external` in `deployment-info.txt`. Ordinary upgrades refuse to change
+that value implicitly. To move between init systems, stop and disable the old
+service, preserve `/etc/mini-singbox` and `/var/lib/mini-singbox`, remove the old
+unit, then perform an explicitly reviewed clean deployment in the new host.
+Never run two runtime backends against the same configuration and ports.
+
+The OCI helper keeps its configuration under
+`${XDG_STATE_HOME:-$HOME/.local/state}/mini-singbox-container` and does not
+automatically import `/etc/mini-singbox`. Migrating a host installation into OCI
+therefore requires an offline backup and ownership review; do not copy active
+tuning state because container/external modes cannot own host sysctls.
 
 Use `sudo mini-singboxctl certificate renew` to renew only the TLS certificate.
 The command preserves protocol credentials, rebuilds delivery pins, validates
