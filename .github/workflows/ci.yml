@@ -129,6 +129,7 @@ jobs:
           test -z "$(grep -F '/var/run/docker.sock' scripts/mini-singbox-containerctl || true)"
           grep -Fq 'the selected Podman engine is not rootless' scripts/mini-singbox-containerctl
           grep -Fq 'the selected Docker engine is not rootless' scripts/mini-singbox-containerctl
+          grep -Fq 'libqrencode-tools' scripts/deploy.sh
       - name: Compose syntax
         env:
           REALITY_SERVER_NAME: www.example.com
@@ -274,12 +275,14 @@ jobs:
       - name: Build local OCI image
         run: docker build --build-arg VERSION=ci-podman --build-arg COMMIT=${GITHUB_SHA} --build-arg DIRTY=false -t mini-singbox:podman .
       - name: Import image into rootless Podman
-        run: docker save mini-singbox:podman | podman load
+        run: |
+          docker save mini-singbox:podman | podman load
+          podman image inspect docker.io/library/mini-singbox:podman >/dev/null
       - name: Rootless Podman lifecycle acceptance
         env:
           MINI_SINGBOX_CONTAINER_ENGINE: podman
           MINI_SINGBOX_CONTAINER_STATE_DIR: ${{ runner.temp }}/mini-singbox-podman
-          MINI_SINGBOX_IMAGE: localhost/mini-singbox:podman
+          MINI_SINGBOX_IMAGE: docker.io/library/mini-singbox:podman
           MINI_SINGBOX_PUBLIC_ADDRESS: 203.0.113.10
           MINI_SINGBOX_REALITY_SERVER_NAME: www.example.com
           MINI_SINGBOX_REALITY_HANDSHAKE: www.example.com:443
@@ -295,7 +298,7 @@ jobs:
           test "$(podman inspect mini-singbox --format '{{.HostConfig.ReadonlyRootfs}}')" = true
           test "$(podman inspect mini-singbox --format '{{.HostConfig.PidsLimit}}')" = 64
           test "$(podman inspect mini-singbox --format '{{.HostConfig.Memory}}')" = 134217728
-          image_id="$(podman image inspect --format '{{.Id}}' localhost/mini-singbox:podman)"
+          image_id="$(podman image inspect --format '{{.Id}}' docker.io/library/mini-singbox:podman)"
           scripts/mini-singbox-containerctl upgrade "$image_id"
           scripts/mini-singbox-containerctl rollback
           scripts/mini-singbox-containerctl down

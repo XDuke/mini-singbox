@@ -425,7 +425,7 @@ elif command_exists apk; then
 	command_exists ps || missing_packages="$missing_packages procps-ng"
 	command_exists pgrep || missing_packages="$missing_packages procps-ng"
 	command_exists openssl || missing_packages="$missing_packages openssl"
-	command_exists qrencode || missing_packages="$missing_packages qrencode"
+	command_exists qrencode || missing_packages="$missing_packages libqrencode-tools"
 	command_exists jq || missing_packages="$missing_packages jq"
 	command_exists file || missing_packages="$missing_packages file"
 	command_exists readelf || missing_packages="$missing_packages binutils"
