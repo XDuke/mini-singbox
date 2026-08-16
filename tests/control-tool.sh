@@ -181,14 +181,14 @@ renew_output="$(sudo env \
 	"$CONTROL_TOOL" certificate renew)"
 printf '%s\n' "$renew_output" > "$WORK_DIRECTORY/renew.txt"
 grep -Fq 'protocol credentials and Reality keys were preserved' "$WORK_DIRECTORY/renew.txt"
-jq -S '{reality:.vless_reality.uuid,hy2:.hysteria2.password,anytls:.anytls.password}' \
-	"$CONFIG_DIRECTORY/client-info.json" > "$WORK_DIRECTORY/credentials.after.json"
-cmp "$WORK_DIRECTORY/credentials.before.json" "$WORK_DIRECTORY/credentials.after.json"
-if cmp -s "$WORK_DIRECTORY/tls.before-renew.crt" "$CONFIG_DIRECTORY/tls.crt"; then
+sudo jq -S '{reality:.vless_reality.uuid,hy2:.hysteria2.password,anytls:.anytls.password}' \
+	"$CONFIG_DIRECTORY/client-info.json" | \
+	cmp "$WORK_DIRECTORY/credentials.before.json" -
+if sudo cmp -s "$WORK_DIRECTORY/tls.before-renew.crt" "$CONFIG_DIRECTORY/tls.crt"; then
 	echo 'certificate renewal did not replace the TLS certificate' >&2
 	exit 1
 fi
-jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' \
+sudo jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' \
 	"$CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" >/dev/null
 sudo chown -R "$(id -u):$(id -g)" "$CONFIG_DIRECTORY"
 

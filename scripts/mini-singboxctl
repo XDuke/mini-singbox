@@ -178,6 +178,9 @@ renew_certificate() {
 		/var/tmp/mini-singbox-renew.*) ;;
 		*) fail "mktemp returned an unsafe renewal directory" ;;
 	esac
+	# The service account must traverse the root-owned workspace to reach its
+	# own 0700 staging directory, but must not be able to list the parent.
+	chmod 0711 "$RENEW_WORK"
 	generated="$RENEW_WORK/generated"
 	RENEW_BACKUP="$RENEW_WORK/config-backup"
 	trap renew_cleanup EXIT
