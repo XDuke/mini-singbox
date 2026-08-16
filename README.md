@@ -7,9 +7,14 @@
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。`v1.1.0` 内置官方 sing-box `v1.13.18`。
+自动更新守护进程。`v1.1.1` 内置官方 sing-box `v1.13.18`。
 
-## main 分支安全整改（待下一个正式版）
+## v1.1.1 安全更新
+
+`v1.1.1` 是不轮换现有 UUID、密码、Reality 私钥或 TLS 证书的安全维护版本。旧版
+AnyTLS 部署会在升级时自动清除未认证证书的交付文件并生成安全出站配置；AnyTLS
+客户端需要重新导入 `/etc/mini-singbox/client-anytls-sing-box-outbound.json`。Reality 与
+Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或重新生成凭据时例外。
 
 - 修复官方 `curl | bash` 命令在 `set -u` 下读取未定义 `BASH_SOURCE` 的问题，并加入
   标准输入执行回归测试；
@@ -18,7 +23,11 @@
   内嵌服务器证书且保持 `insecure=false` 的 sing-box 出站配置；
 - `generate --force` 改为整组事务：所有新文件完成落盘和内容校验后才清理旧副本，
   中途失败会逆序恢复；
-- 卸载增加独立的 `PURGE_BACKUPS=1`，并严格校验所有布尔开关；
+- 新增只续 TLS 证书的 `certificate renew`，会重建客户端 pin、验证服务并在失败时
+  完整回滚；
+- 卸载增加独立的 `PURGE_BACKUPS=1`，严格校验所有布尔开关，并限制配置、密钥、证书
+  和交付路径使用符号链接；
+- 修复 Docker Compose 自定义协议端口只影响部分生成或映射的问题；
 - 正式支持范围收敛为具备完整部署、回滚和 CI 覆盖的 systemd，移除旧的重复
   `install.sh`/OpenRC 发布入口。
 
@@ -88,7 +97,7 @@ minisign 公钥；`deploy.sh` 随后验证 minisign、SHA-256、ELF、版本和�
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.1.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.1.1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -104,9 +113,9 @@ bash bootstrap.sh
 完全固定、分步审阅方式：
 
 ```sh
-git clone --branch v1.1.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
-test "$(git cat-file -t refs/tags/v1.1.0)" = tag
+test "$(git cat-file -t refs/tags/v1.1.1)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -150,7 +159,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 目的 | 一行部署命令前缀 |
 |---|---|
 | 保留配置升级/重装 | 无，直接重跑 |
-| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.1.0` |
+| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.1.1` |
 | 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
 | 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
 | 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
@@ -229,7 +238,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 
 ## 运维命令
 
-`v1.1.0` 一键部署会安装三个按需工具，均不常驻、不监听端口。`mini-singboxctl`
+`v1.1.1` 一键部署会安装三个按需工具，均不常驻、不监听端口。`mini-singboxctl`
 严格离线；只有用户显式执行 `mini-singbox-update` 时才访问 GitHub。
 
 | 命令 | 作用 |
@@ -352,8 +361,8 @@ TasksMax=64
 - TCP 重传率约 `0.061%`；
 - UDP/IP/网卡错误、丢包、服务重启、警告和 OOM 均为 `0`。
 
-以上是旧版参考环境的实测值，不是对 `v1.1.0` 或所有线路、宿主机的性能保证。
-`v1.1.0` 当前确认的是 128 MiB CI 容器内的生成、检查和短时空载启动，不把它表述为
+以上是旧版参考环境的实测值，不是对 `v1.1.1` 或所有线路、宿主机的性能保证。
+`v1.1.1` 发布门禁确认 128 MiB CI 容器内的生成、检查和短时空载启动，不把它表述为
 真实流量或长时间验收。旧版验证摘要见[正式版验证记录](docs/validation.md)。
 
 ## Docker Compose（仅开发和验证）
@@ -363,7 +372,7 @@ TasksMax=64
 需要复现容器硬化检查的开发机可以执行：
 
 ```sh
-git clone --branch v1.1.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
 mkdir config
 sudo chown 65532:65532 config

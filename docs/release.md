@@ -44,7 +44,7 @@ unable to publish a Release for a protected formal tag even when the workflow's
 Create an annotated tag on the reviewed commit and push only that tag:
 
 ```sh
-version=v1.1.0
+version=v1.1.1
 git tag -a "$version" -m "mini-singbox $version"
 git push origin "$version"
 ```
@@ -61,12 +61,12 @@ creates:
 - Go build metadata and compiled-dependency audit evidence
 - signed bootstrap, source, license/notice, security, migration, deployment and service files
 
-The workflow always preserves these 31 files as a flat signed Actions artifact
+The workflow always preserves these 29 files as a flat signed Actions artifact
 named `release-bundle-<tag>`. When `RELEASE_GITHUB_TOKEN` is configured, it also
 creates the GitHub Release automatically. Without that secret, the workflow
 finishes with a notice instead of failing after a successful build: an
 authorized maintainer must create a draft for the existing annotated tag,
-upload every file from the flat bundle, verify the 31-file count, and publish
+upload every file from the flat bundle, verify the 29-file count, and publish
 the draft. GitHub then freezes the tag and assets.
 
 Builds use `CGO_ENABLED=0`, `-trimpath`, an empty build ID, the tag as version,

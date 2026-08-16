@@ -22,15 +22,35 @@ bootstrap command to opt out. Use `sudo mini-singboxctl tune status` to inspect
 the plan and `sudo mini-singboxctl tune rollback` to restore the exact pre-tune
 values. Hysteria2-only deployments do not change TCP settings.
 
+`v1.1.1` keeps the official sing-box `v1.13.18` kernel and focuses on safer
+delivery and recovery. Ordinary upgrades preserve UUIDs, protocol passwords,
+the Reality private key, and the current TLS certificate. Existing AnyTLS
+installations automatically replace an old unauthenticated URI/QR with
+`/etc/mini-singbox/client-anytls-sing-box-outbound.json`, which embeds the
+server certificate and keeps certificate verification enabled. Re-import that
+AnyTLS outbound after upgrading; Reality and Hysteria2 clients do not need to
+be re-imported during an ordinary upgrade.
+
+The supported host service manager is now systemd. The incomplete OpenRC path
+and duplicate legacy installer are no longer release assets. Configuration,
+key, certificate, and delivery paths must not be symbolic links.
+
+Use `sudo mini-singboxctl certificate renew` to renew only the TLS certificate.
+The command preserves protocol credentials, rebuilds delivery pins, validates
+the service, and rolls the complete configuration back on failure. A successful
+renewal changes the certificate pin, so both Hysteria2 and AnyTLS clients must
+then import the new delivery files.
+
 Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
 
-For a clean installation, deploy `v1.1.0` and import the newly generated
-per-protocol QR codes. For an early pre-v1 candidate, keep a private backup,
-stop its service, and copy only the candidate's local `config.json`, Reality
-private key, TLS key, and TLS certificate into `/etc/mini-singbox` with the new
-service-user ownership. Run `mini-singbox check` before starting the new unit.
+For a clean installation, deploy `v1.1.1`, import the Reality and Hysteria2 QR
+codes, and merge the authenticated AnyTLS outbound into the sing-box client.
+For an early pre-v1 candidate, keep a private backup, stop its service, and copy
+only the candidate's local `config.json`, Reality private key, TLS key, and TLS
+certificate into `/etc/mini-singbox` with the new service-user ownership. Run
+`mini-singbox check` before starting the new unit.
 
 To intentionally rotate every credential after migration:
 
@@ -40,3 +60,8 @@ MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL --proto =https --
 
 Existing clients stop working after regeneration. Ordinary upgrades preserve
 credentials and create a rollback backup automatically.
+
+Uninstall keeps historical deployment backups by default. To permanently
+remove both current credentials and matching managed backup directories, use
+`sudo env PURGE=1 PURGE_BACKUPS=1 mini-singbox-uninstall` only after preserving
+anything still needed for rollback. This deletion cannot be undone.

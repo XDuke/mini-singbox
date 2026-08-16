@@ -5,6 +5,10 @@ Semantic Versioning.
 
 ## Unreleased
 
+No changes yet.
+
+## v1.1.1 - 2026-08-16
+
 ### Fixed
 
 - Fixed `bootstrap.sh` stdin execution under `set -u` and added a regression
@@ -34,7 +38,7 @@ Semantic Versioning.
 
 - Bootstrap pins the minisign public key independently of the release tag before
   verifying the signed checksum manifest.
-- Documentation now distinguishes v1.0.0 live 128 MiB evidence from v1.1.0 CI
+- Documentation now distinguishes v1.0.0 live 128 MiB evidence from later CI
   checks and distinguishes full-VM from container-compatible systemd hardening.
 
 ## v1.1.0 - 2026-08-15
