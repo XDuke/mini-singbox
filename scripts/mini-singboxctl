@@ -155,8 +155,9 @@ renew_certificate() {
 	for required in "$JQ" "$QRENCODE" runuser mktemp install cp; do
 		require_command "$required"
 	done
-	[ -f "$CLIENT_INFO_PATH" ] && [ ! -L "$CLIENT_INFO_PATH" ] || \
+	if [ ! -f "$CLIENT_INFO_PATH" ] || [ -L "$CLIENT_INFO_PATH" ]; then
 		fail "client information is missing or unsafe: $CLIENT_INFO_PATH"
+	fi
 	[ ! -L "$CONFIG_DIR" ] || fail "configuration directory must not be a symbolic link: $CONFIG_DIR"
 	case "$CONFIG_DIR" in
 		/etc/mini-singbox|/tmp/*|/var/tmp/*) ;;
@@ -206,8 +207,9 @@ renew_certificate() {
 		fi
 	done
 	for required_output in tls.crt tls.key client-info.json; do
-		[ -f "$generated/$required_output" ] && [ ! -L "$generated/$required_output" ] || \
+		if [ ! -f "$generated/$required_output" ] || [ -L "$generated/$required_output" ]; then
 			fail "renewal output is missing or unsafe: $required_output"
+		fi
 	done
 	cp -a "$CONFIG_DIR" "$RENEW_BACKUP"
 	RENEW_SWITCHED=1
