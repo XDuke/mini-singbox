@@ -15,20 +15,21 @@ import (
 )
 
 type GenerateOptions struct {
-	Output              string
-	Protocols           []string
-	Listen              string
-	PublicAddress       string
-	RealityPort         int
-	Hysteria2Port       int
-	AnyTLSPort          int
-	PublicRealityPort   int
-	PublicHysteria2Port int
-	PublicAnyTLSPort    int
-	RealityServerName   string
-	RealityHandshake    string
-	TLSSAN              string
-	Force               bool
+	Output                   string
+	Protocols                []string
+	Listen                   string
+	PublicAddress            string
+	RealityPort              int
+	Hysteria2Port            int
+	AnyTLSPort               int
+	PublicRealityPort        int
+	PublicHysteria2Port      int
+	PublicAnyTLSPort         int
+	RealityServerName        string
+	RealityHandshake         string
+	TLSSAN                   string
+	AllowInsecureAnyTLSShare bool
+	Force                    bool
 }
 
 type GenerateResult struct {
@@ -54,11 +55,13 @@ type vlessClientInfo struct {
 }
 
 type passwordClientInfo struct {
-	Port     int    `json:"port"`
-	Password string `json:"password"`
-	TLSSAN   string `json:"tls_san"`
-	CertSHA  string `json:"certificate_sha256,omitempty"`
-	ShareURI string `json:"share_uri,omitempty"`
+	Port                int    `json:"port"`
+	Password            string `json:"password"`
+	TLSSAN              string `json:"tls_san"`
+	CertSHA             string `json:"certificate_sha256,omitempty"`
+	SingBoxOutboundFile string `json:"sing_box_outbound_file,omitempty"`
+	ShareURI            string `json:"share_uri,omitempty"`
+	CertificatePEM      string `json:"-"`
 }
 
 func Generate(options GenerateOptions) (*GenerateResult, error) {
@@ -140,11 +143,13 @@ func Generate(options GenerateOptions) (*GenerateResult, error) {
 
 	needTLS := containsProtocol(protocols, "hy2") || containsProtocol(protocols, "anytls")
 	certificateSHA256 := ""
+	var certificatePEM []byte
 	if needTLS {
 		certificate, err := secret.SelfSignedCertificate(options.TLSSAN, time.Now())
 		if err != nil {
 			return nil, err
 		}
+		certificatePEM = certificate.CertificatePEM
 		certificateSHA256, err = certificateFingerprintSHA256(certificate.CertificatePEM)
 		if err != nil {
 			return nil, err
@@ -179,7 +184,7 @@ func Generate(options GenerateOptions) (*GenerateResult, error) {
 		}
 		client.AnyTLS = &passwordClientInfo{
 			Port: options.AnyTLSPort, Password: password, TLSSAN: options.TLSSAN,
-			CertSHA: certificateSHA256,
+			CertSHA: certificateSHA256, CertificatePEM: string(certificatePEM),
 		}
 	}
 
@@ -192,7 +197,7 @@ func Generate(options GenerateOptions) (*GenerateResult, error) {
 		); err != nil {
 			return nil, err
 		}
-		shareFiles, err := buildShareFiles(&client)
+		shareFiles, err := buildDeliveryFiles(&client, options.AllowInsecureAnyTLSShare)
 		if err != nil {
 			return nil, err
 		}

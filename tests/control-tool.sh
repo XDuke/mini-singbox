@@ -40,7 +40,8 @@ chmod 0700 "$CONFIG_DIRECTORY"
 	--public-anytls-port 36279 \
 	--reality-server-name www.example.com \
 	--reality-handshake www.example.com:443 \
-	--tls-san 2001:db8::10 >/dev/null
+	--tls-san 2001:db8::10 \
+	--allow-insecure-anytls-share >/dev/null
 
 grep -Fq '"public_address": "2001:db8::10"' "$CONFIG_DIRECTORY/client-info.json"
 grep -Fq '@[2001:db8::10]:51165' "$CONFIG_DIRECTORY/share-reality.txt"
@@ -57,6 +58,7 @@ cat > "$FAKE_SYSTEMCTL" <<'EOF'
 #!/bin/sh
 case "$*" in
 	'is-active --quiet mini-singbox.service') exit 0 ;;
+	'stop mini-singbox.service'|'start mini-singbox.service') exit 0 ;;
 	'show mini-singbox.service -p MainPID --value') printf '4242\n' ;;
 	'show mini-singbox.service -p MemoryCurrent --value') printf '4194304\n' ;;
 	'show mini-singbox.service -p TasksCurrent --value') printf '6\n' ;;
@@ -79,10 +81,20 @@ EOF
 
 cat > "$FAKE_QRENCODE" <<'EOF'
 #!/bin/sh
-[ "$*" = '-t ANSIUTF8' ] || exit 1
-IFS= read -r payload
-[ -n "$payload" ] || exit 1
-printf '[mock QR rendered]\n'
+case "$*" in
+	'-t ANSIUTF8')
+		IFS= read -r payload
+		[ -n "$payload" ] || exit 1
+		printf '[mock QR rendered]\n'
+		;;
+	-l\ M\ -t\ PNG\ -o\ *)
+		[ "$#" -eq 6 ] || exit 1
+		IFS= read -r payload
+		[ -n "$payload" ] || exit 1
+		printf '[mock PNG for %s]\n' "$payload" > "$6"
+		;;
+	*) exit 1 ;;
+esac
 EOF
 
 chmod 0755 "$FAKE_SYSTEMCTL" "$FAKE_SS" "$FAKE_QRENCODE"
@@ -153,4 +165,66 @@ if run_control qr invalid >/dev/null 2>&1; then
 	exit 1
 fi
 
-echo 'control tool, offline tune plan, and IPv6 delivery checks passed'
+cp "$CONFIG_DIRECTORY/client-info.json" "$WORK_DIRECTORY/client-info.before-renew.json"
+cp "$CONFIG_DIRECTORY/tls.crt" "$WORK_DIRECTORY/tls.before-renew.crt"
+jq -S '{reality:.vless_reality.uuid,hy2:.hysteria2.password,anytls:.anytls.password}' \
+	"$CONFIG_DIRECTORY/client-info.json" > "$WORK_DIRECTORY/credentials.before.json"
+chmod 0711 "$WORK_DIRECTORY"
+sudo chown -R nobody:nogroup "$CONFIG_DIRECTORY"
+renew_output="$(sudo env \
+	MINI_SINGBOX_BINARY="$BINARY" \
+	MINI_SINGBOX_CONFIG_DIR="$CONFIG_DIRECTORY" \
+	MINI_SINGBOX_SERVICE_USER=nobody \
+	MINI_SINGBOX_SYSTEMCTL="$FAKE_SYSTEMCTL" \
+	MINI_SINGBOX_QRENCODE="$FAKE_QRENCODE" \
+	MINI_SINGBOX_INIT_SYSTEM=systemd \
+	"$CONTROL_TOOL" certificate renew)"
+printf '%s\n' "$renew_output" > "$WORK_DIRECTORY/renew.txt"
+grep -Fq 'protocol credentials and Reality keys were preserved' "$WORK_DIRECTORY/renew.txt"
+jq -S '{reality:.vless_reality.uuid,hy2:.hysteria2.password,anytls:.anytls.password}' \
+	"$CONFIG_DIRECTORY/client-info.json" > "$WORK_DIRECTORY/credentials.after.json"
+cmp "$WORK_DIRECTORY/credentials.before.json" "$WORK_DIRECTORY/credentials.after.json"
+if cmp -s "$WORK_DIRECTORY/tls.before-renew.crt" "$CONFIG_DIRECTORY/tls.crt"; then
+	echo 'certificate renewal did not replace the TLS certificate' >&2
+	exit 1
+fi
+jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' \
+	"$CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" >/dev/null
+sudo chown -R "$(id -u):$(id -g)" "$CONFIG_DIRECTORY"
+
+FAILING_SYSTEMCTL="$WORK_DIRECTORY/failing-systemctl"
+cat > "$FAILING_SYSTEMCTL" <<'EOF'
+#!/bin/sh
+set -eu
+case "$*" in
+	'is-active --quiet mini-singbox.service'|'stop mini-singbox.service') exit 0 ;;
+	'start mini-singbox.service')
+		if [ ! -e "$MINI_SINGBOX_FAIL_START_STATE" ]; then
+			: > "$MINI_SINGBOX_FAIL_START_STATE"
+			exit 1
+		fi
+		exit 0
+		;;
+	*) exit 1 ;;
+esac
+EOF
+chmod 0755 "$FAILING_SYSTEMCTL"
+cp "$CONFIG_DIRECTORY/tls.crt" "$WORK_DIRECTORY/tls.before-failed-renew.crt"
+sudo chown -R nobody:nogroup "$CONFIG_DIRECTORY"
+if sudo env \
+	MINI_SINGBOX_BINARY="$BINARY" \
+	MINI_SINGBOX_CONFIG_DIR="$CONFIG_DIRECTORY" \
+	MINI_SINGBOX_SERVICE_USER=nobody \
+	MINI_SINGBOX_SYSTEMCTL="$FAILING_SYSTEMCTL" \
+	MINI_SINGBOX_FAIL_START_STATE="$WORK_DIRECTORY/fail-start.state" \
+	MINI_SINGBOX_QRENCODE="$FAKE_QRENCODE" \
+	MINI_SINGBOX_INIT_SYSTEM=systemd \
+	"$CONTROL_TOOL" certificate renew >/dev/null 2>"$WORK_DIRECTORY/failed-renew.stderr"; then
+	echo 'certificate renewal unexpectedly succeeded when service restart failed' >&2
+	exit 1
+fi
+grep -Fq 'restoring the previous configuration' "$WORK_DIRECTORY/failed-renew.stderr"
+sudo cmp "$WORK_DIRECTORY/tls.before-failed-renew.crt" "$CONFIG_DIRECTORY/tls.crt"
+sudo chown -R "$(id -u):$(id -g)" "$CONFIG_DIRECTORY"
+
+echo 'control tool, certificate renewal rollback, offline tune plan, and IPv6 delivery checks passed'

@@ -50,6 +50,8 @@ func execute(args []string, stdout, stderr io.Writer) int {
 		return executeGenerate(args[1:], stdout, stderr)
 	case "deliver":
 		return executeDeliver(args[1:], stdout, stderr)
+	case "renew-certificate":
+		return executeRenewCertificate(args[1:], stdout, stderr)
 	case "tune":
 		return executeTune(args[1:], stdout, stderr)
 	case "version":
@@ -80,7 +82,7 @@ func parseConfigFlag(command string, args []string, stderr io.Writer) (string, b
 }
 
 func printUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "usage: mini-singbox <run|check|generate|deliver|tune|version> [options]")
+	fmt.Fprintln(writer, "usage: mini-singbox <run|check|generate|deliver|renew-certificate|tune|version> [options]")
 }
 
 func executeTune(args []string, stdout, stderr io.Writer) int {
@@ -218,6 +220,7 @@ func executeGenerate(args []string, stdout, stderr io.Writer) int {
 	realityServerName := flags.String("reality-server-name", "", "Reality server name")
 	realityHandshake := flags.String("reality-handshake", "", "Reality handshake HOST:PORT")
 	tlsSAN := flags.String("tls-san", "", "self-signed certificate DNS/IP SAN")
+	allowInsecureAnyTLSShare := flags.Bool("allow-insecure-anytls-share", false, "generate an unauthenticated AnyTLS URI (unsafe)")
 	force := flags.Bool("force", false, "replace existing generated files")
 	showSecrets := flags.Bool("show-secrets", false, "print client credentials to stdout")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
@@ -233,7 +236,7 @@ func executeGenerate(args []string, stdout, stderr io.Writer) int {
 		PublicRealityPort: *publicRealityPort, PublicHysteria2Port: *publicHy2Port,
 		PublicAnyTLSPort:  *publicAnyTLSPort,
 		RealityServerName: *realityServerName, RealityHandshake: *realityHandshake,
-		TLSSAN: *tlsSAN, Force: *force,
+		TLSSAN: *tlsSAN, AllowInsecureAnyTLSShare: *allowInsecureAnyTLSShare, Force: *force,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -258,6 +261,7 @@ func executeDeliver(args []string, stdout, stderr io.Writer) int {
 	realityPort := flags.Int("reality-port", 0, "client-facing VLESS Reality port")
 	hy2Port := flags.Int("hy2-port", 0, "client-facing Hysteria2 port")
 	anyTLSPort := flags.Int("anytls-port", 0, "client-facing AnyTLS port")
+	allowInsecureAnyTLSShare := flags.Bool("allow-insecure-anytls-share", false, "generate an unauthenticated AnyTLS URI (unsafe)")
 	force := flags.Bool("force", false, "replace existing delivery files")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
 		if flags.NArg() != 0 {
@@ -268,7 +272,38 @@ func executeDeliver(args []string, stdout, stderr io.Writer) int {
 	result, err := app.Deliver(app.DeliverOptions{
 		ConfigPath: *configPath, Output: *output, PublicAddress: *publicAddress,
 		RealityPort: *realityPort, Hysteria2Port: *hy2Port, AnyTLSPort: *anyTLSPort,
-		Force: *force,
+		AllowInsecureAnyTLSShare: *allowInsecureAnyTLSShare, Force: *force,
+	})
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	for _, path := range result.Files {
+		fmt.Fprintln(stdout, path)
+	}
+	return 0
+}
+
+func executeRenewCertificate(args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("renew-certificate", flag.ContinueOnError)
+	flags.SetOutput(stderr)
+	configPath := flags.String("c", "config.json", "path to existing mini-singbox config")
+	output := flags.String("output", ".", "empty staging output directory")
+	publicAddress := flags.String("public-address", "", "client-facing DNS name or IP address")
+	realityPort := flags.Int("reality-port", 0, "client-facing VLESS Reality port")
+	hy2Port := flags.Int("hy2-port", 0, "client-facing Hysteria2 port")
+	anyTLSPort := flags.Int("anytls-port", 0, "client-facing AnyTLS port")
+	allowInsecureAnyTLSShare := flags.Bool("allow-insecure-anytls-share", false, "generate an unauthenticated AnyTLS URI (unsafe)")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		if flags.NArg() != 0 {
+			fmt.Fprintln(stderr, "renew-certificate: unexpected arguments")
+		}
+		return 2
+	}
+	result, err := app.RenewCertificate(app.RenewCertificateOptions{
+		ConfigPath: *configPath, Output: *output, PublicAddress: *publicAddress,
+		RealityPort: *realityPort, Hysteria2Port: *hy2Port, AnyTLSPort: *anyTLSPort,
+		AllowInsecureAnyTLSShare: *allowInsecureAnyTLSShare,
 	})
 	if err != nil {
 		fmt.Fprintln(stderr, err)

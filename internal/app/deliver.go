@@ -18,13 +18,14 @@ import (
 )
 
 type DeliverOptions struct {
-	ConfigPath    string
-	Output        string
-	PublicAddress string
-	RealityPort   int
-	Hysteria2Port int
-	AnyTLSPort    int
-	Force         bool
+	ConfigPath               string
+	Output                   string
+	PublicAddress            string
+	RealityPort              int
+	Hysteria2Port            int
+	AnyTLSPort               int
+	AllowInsecureAnyTLSShare bool
+	Force                    bool
 }
 
 type DeliverResult struct {
@@ -85,7 +86,7 @@ func Deliver(options DeliverOptions) (*DeliverResult, error) {
 	if err := applyPublicPorts(&client, options.RealityPort, options.Hysteria2Port, options.AnyTLSPort); err != nil {
 		return nil, err
 	}
-	files, err := buildShareFiles(&client)
+	files, err := buildDeliveryFiles(&client, options.AllowInsecureAnyTLSShare)
 	if err != nil {
 		return nil, err
 	}
@@ -148,5 +149,8 @@ func tlsClientInfo(certificatePath string) (*passwordClientInfo, error) {
 		return nil, fmt.Errorf("certificate has no DNS or IP subject alternative name")
 	}
 	fingerprint := sha256.Sum256(certificate.Raw)
-	return &passwordClientInfo{TLSSAN: serverName, CertSHA: hex.EncodeToString(fingerprint[:])}, nil
+	return &passwordClientInfo{
+		TLSSAN: serverName, CertSHA: hex.EncodeToString(fingerprint[:]),
+		CertificatePEM: string(content),
+	}, nil
 }

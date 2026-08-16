@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"net"
@@ -37,7 +38,7 @@ func certificateFingerprintSHA256(certificatePEM []byte) (string, error) {
 	return hex.EncodeToString(fingerprint[:]), nil
 }
 
-func buildShareFiles(client *clientInfo) ([]secret.File, error) {
+func buildDeliveryFiles(client *clientInfo, allowInsecureAnyTLSShare bool) ([]secret.File, error) {
 	address := client.PublicAddress
 	files := make([]secret.File, 0, 3)
 	if client.VLESSReality != nil {
@@ -70,15 +71,48 @@ func buildShareFiles(client *clientInfo) ([]secret.File, error) {
 		files = append(files, shareFile("share-hysteria2.txt", client.Hysteria2.ShareURI))
 	}
 	if client.AnyTLS != nil {
-		query := url.Values{
-			"insecure": {"1"},
-			"sni":      {client.AnyTLS.TLSSAN},
+		client.AnyTLS.SingBoxOutboundFile = "client-anytls-sing-box-outbound.json"
+		outbound, err := json.MarshalIndent(struct {
+			Type       string `json:"type"`
+			Tag        string `json:"tag"`
+			Server     string `json:"server"`
+			ServerPort int    `json:"server_port"`
+			Password   string `json:"password"`
+			TLS        struct {
+				Enabled     bool     `json:"enabled"`
+				ServerName  string   `json:"server_name"`
+				Certificate []string `json:"certificate"`
+			} `json:"tls"`
+		}{
+			Type: "anytls", Tag: "mini-singbox-anytls", Server: address,
+			ServerPort: client.AnyTLS.Port, Password: client.AnyTLS.Password,
+			TLS: struct {
+				Enabled     bool     `json:"enabled"`
+				ServerName  string   `json:"server_name"`
+				Certificate []string `json:"certificate"`
+			}{Enabled: true, ServerName: client.AnyTLS.TLSSAN, Certificate: []string{client.AnyTLS.CertificatePEM}},
+		}, "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("marshal AnyTLS sing-box outbound: %w", err)
 		}
-		client.AnyTLS.ShareURI = shareURI(
-			"anytls", client.AnyTLS.Password, address, client.AnyTLS.Port,
-			"/", query, "mini-singbox AnyTLS",
-		)
-		files = append(files, shareFile("share-anytls.txt", client.AnyTLS.ShareURI))
+		if client.AnyTLS.CertificatePEM == "" {
+			return nil, fmt.Errorf("cannot build authenticated AnyTLS client config without the server certificate")
+		}
+		outbound = append(outbound, '\n')
+		files = append(files, secret.File{
+			Name: client.AnyTLS.SingBoxOutboundFile, Data: outbound, Mode: 0o600,
+		})
+		if allowInsecureAnyTLSShare {
+			query := url.Values{
+				"insecure": {"1"},
+				"sni":      {client.AnyTLS.TLSSAN},
+			}
+			client.AnyTLS.ShareURI = shareURI(
+				"anytls", client.AnyTLS.Password, address, client.AnyTLS.Port,
+				"/", query, "mini-singbox AnyTLS UNSAFE",
+			)
+			files = append(files, shareFile("share-anytls.txt", client.AnyTLS.ShareURI))
+		}
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("cannot build sharing files without an enabled protocol")

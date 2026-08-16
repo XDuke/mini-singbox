@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -99,6 +100,45 @@ func TestWriteFilesAtomicAndOverwriteProtection(t *testing.T) {
 		info, err := os.Stat(filepath.Join(directory, "secret"))
 		if err != nil || info.Mode().Perm() != 0o600 {
 			t.Fatalf("mode = %v, error %v", info.Mode().Perm(), err)
+		}
+	}
+}
+
+func TestWriteFilesRollsBackWholeSetAfterReplacementFailure(t *testing.T) {
+	directory := t.TempDir()
+	for name, content := range map[string]string{"config.json": "old-config", "tls.key": "old-key"} {
+		if err := os.WriteFile(filepath.Join(directory, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	renameCalls := 0
+	rename := func(oldPath, newPath string) error {
+		renameCalls++
+		if renameCalls == 4 {
+			return errors.New("injected second-file replacement failure")
+		}
+		return os.Rename(oldPath, newPath)
+	}
+	err := writeFiles(directory, []File{
+		{Name: "config.json", Data: []byte("new-config"), Mode: 0o600},
+		{Name: "tls.key", Data: []byte("new-key"), Mode: 0o600},
+	}, true, rename)
+	if err == nil || !strings.Contains(err.Error(), "injected second-file replacement failure") {
+		t.Fatalf("writeFiles() error = %v", err)
+	}
+	for name, expected := range map[string]string{"config.json": "old-config", "tls.key": "old-key"} {
+		content, readErr := os.ReadFile(filepath.Join(directory, name))
+		if readErr != nil || string(content) != expected {
+			t.Fatalf("restored %s = %q, error %v", name, content, readErr)
+		}
+	}
+	entries, readErr := os.ReadDir(directory)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	for _, entry := range entries {
+		if strings.Contains(entry.Name(), ".tmp-") || strings.HasSuffix(entry.Name(), ".backup") {
+			t.Fatalf("transaction artifact left after rollback: %s", entry.Name())
 		}
 	}
 }

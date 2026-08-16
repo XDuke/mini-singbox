@@ -18,12 +18,21 @@ type File struct {
 }
 
 type stagedFile struct {
-	file   File
-	target string
-	temp   string
+	file      File
+	target    string
+	temp      string
+	backup    string
+	hadTarget bool
+	installed bool
 }
 
+type renameFunc func(string, string) error
+
 func WriteFiles(directory string, files []File, force bool) error {
+	return writeFiles(directory, files, force, os.Rename)
+}
+
+func writeFiles(directory string, files []File, force bool, rename renameFunc) error {
 	if directory == "" {
 		return fmt.Errorf("output directory is empty")
 	}
@@ -55,7 +64,16 @@ func WriteFiles(directory string, files []File, force bool) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("inspect output %s: %w", target, err)
 		}
-		staged = append(staged, stagedFile{file: file, target: target})
+		stagedFile := stagedFile{file: file, target: target}
+		if force {
+			stagedFile.backup = target + ".backup"
+			if _, err := os.Lstat(stagedFile.backup); err == nil {
+				return fmt.Errorf("refusing existing backup path: %s", stagedFile.backup)
+			} else if !os.IsNotExist(err) {
+				return fmt.Errorf("inspect backup path %s: %w", stagedFile.backup, err)
+			}
+		}
+		staged = append(staged, stagedFile)
 	}
 	for index := range staged {
 		temp, err := writeTemp(directory, staged[index].file)
@@ -66,20 +84,29 @@ func WriteFiles(directory string, files []File, force bool) error {
 		staged[index].temp = temp
 	}
 	for index := range staged {
-		if err := replaceTarget(staged[index].temp, staged[index].target, force); err != nil {
-			cleanupTemps(staged[index:])
-			return err
+		if err := replaceTarget(&staged[index], force, rename); err != nil {
+			return rollbackWrite(directory, staged, rename, err)
 		}
-		staged[index].temp = ""
 	}
 	if err := syncDirectory(directory); err != nil {
-		return fmt.Errorf("sync output directory: %w", err)
+		return rollbackWrite(directory, staged, rename, fmt.Errorf("sync output directory: %w", err))
 	}
 	for _, stagedFile := range staged {
 		content, err := os.ReadFile(stagedFile.target)
 		if err != nil || !bytes.Equal(content, stagedFile.file.Data) {
-			return fmt.Errorf("verify generated file %s", stagedFile.target)
+			return rollbackWrite(directory, staged, rename, fmt.Errorf("verify generated file %s", stagedFile.target))
 		}
+	}
+	for index := range staged {
+		if staged[index].hadTarget {
+			if err := os.Remove(staged[index].backup); err != nil {
+				return fmt.Errorf("remove committed-file backup %s: %w", staged[index].backup, err)
+			}
+			staged[index].backup = ""
+		}
+	}
+	if err := syncDirectory(directory); err != nil {
+		return fmt.Errorf("sync committed output directory: %w", err)
 	}
 	return nil
 }
@@ -140,42 +167,69 @@ func writeTemp(directory string, file File) (string, error) {
 	return temp, nil
 }
 
-func replaceTarget(temp, target string, force bool) error {
+func replaceTarget(file *stagedFile, force bool, rename renameFunc) error {
 	if !force {
-		if _, err := os.Lstat(target); err == nil {
-			return fmt.Errorf("output appeared during generation: %s", target)
+		if _, err := os.Lstat(file.target); err == nil {
+			return fmt.Errorf("output appeared during generation: %s", file.target)
 		} else if !os.IsNotExist(err) {
 			return err
 		}
-		return os.Rename(temp, target)
-	}
-	backup := target + ".backup"
-	if _, err := os.Lstat(backup); err == nil {
-		return fmt.Errorf("refusing existing backup path: %s", backup)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	hadTarget := false
-	if _, err := os.Lstat(target); err == nil {
-		if err := os.Rename(target, backup); err != nil {
+		if err := rename(file.temp, file.target); err != nil {
 			return err
 		}
-		hadTarget = true
+		file.temp = ""
+		file.installed = true
+		return nil
+	}
+	if _, err := os.Lstat(file.backup); err == nil {
+		return fmt.Errorf("backup path appeared during generation: %s", file.backup)
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if err := os.Rename(temp, target); err != nil {
-		if hadTarget {
-			_ = os.Rename(backup, target)
+	if _, err := os.Lstat(file.target); err == nil {
+		if err := rename(file.target, file.backup); err != nil {
+			return err
 		}
+		file.hadTarget = true
+	} else if !os.IsNotExist(err) {
 		return err
 	}
-	if hadTarget {
-		if err := os.Remove(backup); err != nil {
-			return fmt.Errorf("remove replaced-file backup: %w", err)
+	if err := rename(file.temp, file.target); err != nil {
+		return err
+	}
+	file.temp = ""
+	file.installed = true
+	return nil
+}
+
+func rollbackWrite(directory string, files []stagedFile, rename renameFunc, cause error) error {
+	var rollbackErrors []string
+	for index := len(files) - 1; index >= 0; index-- {
+		file := &files[index]
+		if file.installed {
+			if err := os.Remove(file.target); err != nil && !os.IsNotExist(err) {
+				rollbackErrors = append(rollbackErrors, fmt.Sprintf("remove %s: %v", file.target, err))
+				continue
+			}
+			file.installed = false
+		}
+		if file.hadTarget {
+			if err := rename(file.backup, file.target); err != nil {
+				rollbackErrors = append(rollbackErrors, fmt.Sprintf("restore %s: %v", file.target, err))
+				continue
+			}
+			file.hadTarget = false
+			file.backup = ""
 		}
 	}
-	return nil
+	cleanupTemps(files)
+	if err := syncDirectory(directory); err != nil {
+		rollbackErrors = append(rollbackErrors, fmt.Sprintf("sync rollback directory: %v", err))
+	}
+	if len(rollbackErrors) != 0 {
+		return fmt.Errorf("%w; rollback incomplete: %s", cause, strings.Join(rollbackErrors, "; "))
+	}
+	return cause
 }
 
 func cleanupTemps(files []stagedFile) {

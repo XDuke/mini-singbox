@@ -5,7 +5,37 @@ Semantic Versioning.
 
 ## Unreleased
 
-No changes yet.
+### Fixed
+
+- Fixed `bootstrap.sh` stdin execution under `set -u` and added a regression
+  test for the documented `curl | bash` path.
+- Made forced multi-file generation transactional across the complete file set,
+  including reverse-order rollback after a mid-commit failure.
+- Added strict boolean validation and explicit historical-backup removal through
+  `PURGE_BACKUPS=1`.
+- Added certificate-only renewal with credential preservation, rebuilt client
+  pins, guarded service restart, and full configuration rollback on failure.
+- Made custom Compose protocol ports apply consistently to generation and both
+  sides of each published port mapping.
+
+### Changed
+
+- AnyTLS self-signed delivery now defaults to an authenticated sing-box outbound
+  with the server certificate embedded. The unauthenticated standard URI/QR is
+  available only through an explicitly unsafe compatibility switch.
+- Existing AnyTLS installations automatically refresh delivery files on upgrade
+  when the authenticated outbound is missing or an old insecure share remains.
+- The supported service manager is now systemd; the duplicate legacy installer
+  and incomplete OpenRC release path were removed.
+- Configuration, key, certificate, and delivery paths now consistently reject
+  symbolic links.
+
+### Security
+
+- Bootstrap pins the minisign public key independently of the release tag before
+  verifying the signed checksum manifest.
+- Documentation now distinguishes v1.0.0 live 128 MiB evidence from v1.1.0 CI
+  checks and distinguishes full-VM from container-compatible systemd hardening.
 
 ## v1.1.0 - 2026-08-15
 

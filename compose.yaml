@@ -21,9 +21,9 @@ services:
     volumes:
       - ./config:/etc/mini-singbox:ro
     ports:
-      - "${REALITY_PORT:-20001}:20001/tcp"
-      - "${HY2_PORT:-20002}:20002/udp"
-      - "${ANYTLS_PORT:-20003}:20003/tcp"
+      - "${REALITY_PORT:-20001}:${REALITY_PORT:-20001}/tcp"
+      - "${HY2_PORT:-20002}:${HY2_PORT:-20002}/udp"
+      - "${ANYTLS_PORT:-20003}:${ANYTLS_PORT:-20003}/tcp"
 
   generate:
     profiles: ["tools"]
@@ -48,6 +48,12 @@ services:
       - ${LISTEN_ADDRESS:-::}
       - --public-address
       - ${PUBLIC_ADDRESS:-}
+      - --reality-port
+      - ${REALITY_PORT:-20001}
+      - --hy2-port
+      - ${HY2_PORT:-20002}
+      - --anytls-port
+      - ${ANYTLS_PORT:-20003}
       - --reality-server-name
       - ${REALITY_SERVER_NAME:?set REALITY_SERVER_NAME}
       - --reality-handshake

@@ -40,9 +40,17 @@ first write, applied values are read back, and the dedicated sysctl file is
 protected by an ownership hash. Rollback refuses to overwrite later external
 changes. Set `MINI_SINGBOX_AUTO_TUNE=0` to disable deployment-time tuning.
 
-`client-info.json`, private keys, sharing links, and QR images are credentials.
-`mini-singboxctl qr` is an explicit local disclosure command and warns before
-rendering them. Do not capture its output in public logs.
+`client-info.json`, private keys, sharing links, QR images, and generated client
+outbound files are credentials. `mini-singboxctl qr` is an explicit local
+disclosure command and warns before rendering them. Do not capture its output
+in public logs.
+
+AnyTLS standard sharing URIs do not provide a cross-client certificate pin for
+the default self-signed certificate. mini-singbox therefore delivers an
+authenticated sing-box outbound with the exact server certificate embedded and
+does not generate an AnyTLS URI/QR by default. The
+`MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` compatibility switch deliberately
+disables server authentication and must not be treated as a secure default.
 
 `GOMEMLIMIT` constrains Go-managed memory. It is not a container hard limit and
 does not include all kernel socket memory; keep the cgroup/systemd memory limit.

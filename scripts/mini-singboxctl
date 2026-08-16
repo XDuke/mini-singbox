@@ -9,7 +9,6 @@ TUNE_STATE_DIR="${MINI_SINGBOX_TUNE_STATE_DIR:-/var/lib/mini-singbox/tune}"
 SERVICE="${MINI_SINGBOX_SERVICE:-mini-singbox.service}"
 SERVICE_USER="${MINI_SINGBOX_SERVICE_USER:-mini-singbox}"
 SYSTEMCTL="${MINI_SINGBOX_SYSTEMCTL:-systemctl}"
-RC_SERVICE="${MINI_SINGBOX_RC_SERVICE:-rc-service}"
 QRENCODE="${MINI_SINGBOX_QRENCODE:-qrencode}"
 OPENSSL="${MINI_SINGBOX_OPENSSL:-openssl}"
 JQ="${MINI_SINGBOX_JQ:-jq}"
@@ -20,6 +19,33 @@ fail() {
 	exit 1
 }
 
+RENEW_WORK=""
+RENEW_BACKUP=""
+RENEW_SWITCHED=0
+RENEW_COMMITTED=0
+
+renew_cleanup() {
+	status=$?
+	trap - EXIT HUP INT TERM
+	if [ "$RENEW_SWITCHED" -eq 1 ] && [ "$RENEW_COMMITTED" -eq 0 ]; then
+		printf 'mini-singboxctl: certificate renewal failed; restoring the previous configuration\n' >&2
+		"$SYSTEMCTL" stop "$SERVICE" >/dev/null 2>&1 || true
+		if ! rm -rf -- "$CONFIG_DIR"; then
+			printf 'mini-singboxctl: could not remove the failed replacement configuration\n' >&2
+		elif ! cp -a "$RENEW_BACKUP" "$CONFIG_DIR"; then
+			printf 'mini-singboxctl: CRITICAL: could not restore the previous configuration from %s\n' "$RENEW_BACKUP" >&2
+		elif ! "$SYSTEMCTL" start "$SERVICE" >/dev/null 2>&1; then
+			printf 'mini-singboxctl: previous configuration was restored but the service did not restart\n' >&2
+		fi
+	fi
+	case "$RENEW_WORK" in
+		/var/tmp/mini-singbox-renew.*|/tmp/mini-singbox-renew.*) rm -rf -- "$RENEW_WORK" ;;
+		"") ;;
+		*) printf 'mini-singboxctl: refusing to remove unexpected renewal directory %s\n' "$RENEW_WORK" >&2 ;;
+	esac
+	exit "$status"
+}
+
 usage() {
 	cat <<'EOF'
 usage: mini-singboxctl <status|check|certificate|qr|logs|tune|version> [options]
@@ -28,6 +54,7 @@ commands:
   status                   validate config, service, listeners, memory, and TLS expiry
   check                    validate the installed configuration
   certificate              show TLS certificate expiry and fail inside 30 days
+  certificate renew        rotate only the TLS certificate/key with guarded rollback
   qr [reality|hy2|anytls|all]
                            render sensitive protocol QR codes and sharing links
   logs [LINES]             show 1-1000 recent service log lines (default 100)
@@ -68,8 +95,6 @@ detect_init() {
 		printf '%s\n' "$MINI_SINGBOX_INIT_SYSTEM"
 	elif command_available "$SYSTEMCTL" && [ -d /run/systemd/system ]; then
 		printf 'systemd\n'
-	elif command_available "$RC_SERVICE"; then
-		printf 'openrc\n'
 	else
 		printf 'unknown\n'
 	fi
@@ -78,7 +103,6 @@ detect_init() {
 service_is_active() {
 	case "$1" in
 		systemd) "$SYSTEMCTL" is-active --quiet "$SERVICE" ;;
-		openrc) "$RC_SERVICE" "${SERVICE%.service}" status 2>/dev/null | grep -q 'started' ;;
 		*) return 1 ;;
 	esac
 }
@@ -120,6 +144,97 @@ show_certificate() {
 			exit 1
 		fi
 	done
+}
+
+renew_certificate() {
+	require_installation
+	[ "$(id -u)" -eq 0 ] || fail "certificate renewal must run as root"
+	[ "$(detect_init)" = "systemd" ] || fail "certificate renewal requires a running systemd environment"
+	"$SYSTEMCTL" is-active --quiet "$SERVICE" || fail "service must be active before certificate renewal"
+	for required in "$JQ" "$QRENCODE" runuser mktemp install cp; do
+		require_command "$required"
+	done
+	[ -f "$CLIENT_INFO_PATH" ] && [ ! -L "$CLIENT_INFO_PATH" ] || \
+		fail "client information is missing or unsafe: $CLIENT_INFO_PATH"
+	[ ! -L "$CONFIG_DIR" ] || fail "configuration directory must not be a symbolic link: $CONFIG_DIR"
+	case "$CONFIG_DIR" in
+		/etc/mini-singbox|/tmp/*|/var/tmp/*) ;;
+		*) fail "refusing certificate renewal in an unexpected configuration directory: $CONFIG_DIR" ;;
+	esac
+	public_address="$($JQ -er '.public_address' "$CLIENT_INFO_PATH")" || \
+		fail "client information does not contain a public address"
+	reality_port="$($JQ -r '.vless_reality.port // 0' "$CLIENT_INFO_PATH")"
+	hy2_port="$($JQ -r '.hysteria2.port // 0' "$CLIENT_INFO_PATH")"
+	anytls_port="$($JQ -r '.anytls.port // 0' "$CLIENT_INFO_PATH")"
+	allow_insecure_anytls=0
+	if "$JQ" -e '(.anytls.share_uri // "") | startswith("anytls://")' \
+		"$CLIENT_INFO_PATH" >/dev/null 2>&1; then
+		allow_insecure_anytls=1
+	fi
+
+	RENEW_WORK="$(mktemp -d /var/tmp/mini-singbox-renew.XXXXXX)" || \
+		fail "cannot create certificate renewal workspace"
+	case "$RENEW_WORK" in
+		/var/tmp/mini-singbox-renew.*) ;;
+		*) fail "mktemp returned an unsafe renewal directory" ;;
+	esac
+	generated="$RENEW_WORK/generated"
+	RENEW_BACKUP="$RENEW_WORK/config-backup"
+	trap renew_cleanup EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+	install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$generated"
+
+	runuser -u "$SERVICE_USER" -- "$BINARY" renew-certificate \
+		-c "$CONFIG_PATH" \
+		--output "$generated" \
+		--public-address "$public_address" \
+		--reality-port "$reality_port" \
+		--hy2-port "$hy2_port" \
+		--anytls-port "$anytls_port" \
+		--allow-insecure-anytls-share="$allow_insecure_anytls" >/dev/null
+	for qr_source in share-reality share-hysteria2 share-anytls; do
+		if [ -f "$generated/$qr_source.txt" ]; then
+			"$QRENCODE" -l M -t PNG -o "$generated/$qr_source.png" < "$generated/$qr_source.txt"
+			chown "$SERVICE_USER:$SERVICE_USER" "$generated/$qr_source.png"
+			chmod 0600 "$generated/$qr_source.png"
+		fi
+	done
+	for required_output in tls.crt tls.key client-info.json; do
+		[ -f "$generated/$required_output" ] && [ ! -L "$generated/$required_output" ] || \
+			fail "renewal output is missing or unsafe: $required_output"
+	done
+	cp -a "$CONFIG_DIR" "$RENEW_BACKUP"
+	RENEW_SWITCHED=1
+	"$SYSTEMCTL" stop "$SERVICE"
+	for renewal_file in \
+		tls.crt tls.key client-info.json client-anytls-sing-box-outbound.json \
+		share-reality.txt share-hysteria2.txt share-anytls.txt \
+		share-reality.png share-hysteria2.png share-anytls.png; do
+		if [ -f "$generated/$renewal_file" ] && [ ! -L "$generated/$renewal_file" ]; then
+			case "$renewal_file" in
+				tls.crt) mode=0644 ;;
+				*) mode=0600 ;;
+			esac
+			install -m "$mode" -o "$SERVICE_USER" -g "$SERVICE_USER" \
+				"$generated/$renewal_file" "$CONFIG_DIR/$renewal_file"
+		else
+			case "$renewal_file" in
+				tls.crt|tls.key|client-info.json) fail "renewal output is missing $renewal_file" ;;
+				*) rm -f -- "$CONFIG_DIR/$renewal_file" ;;
+			esac
+		fi
+	done
+	run_check >/dev/null
+	"$SYSTEMCTL" start "$SERVICE"
+	sleep 3
+	"$SYSTEMCTL" is-active --quiet "$SERVICE" || fail "service did not remain active after certificate renewal"
+	show_certificate >/dev/null
+	RENEW_COMMITTED=1
+	RENEW_SWITCHED=0
+	printf 'TLS certificate renewed; protocol credentials and Reality keys were preserved.\n'
+	printf 'Re-import Hysteria2 and AnyTLS client delivery because their certificate authentication changed.\n'
 }
 
 socket_is_listening() {
@@ -249,6 +364,19 @@ show_qr() {
 			printf 'link (sensitive): %s\n' "$share_link"
 			found=1
 		else
+			if [ "$name" = "anytls" ] && \
+				[ -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] && \
+				[ ! -L "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ]; then
+				if "$JQ" -e '(.anytls.share_uri // "") | startswith("anytls://")' \
+					"$CLIENT_INFO_PATH" >/dev/null 2>&1; then
+					fail "explicitly enabled AnyTLS share link is missing or unsafe: $path"
+				fi
+				if [ "$protocol" = "all" ]; then
+					printf 'WARNING: AnyTLS QR skipped because its standard URI cannot authenticate a self-signed certificate; use %s/client-anytls-sing-box-outbound.json.\n' "$CONFIG_DIR" >&2
+					continue
+				fi
+				fail "AnyTLS QR is disabled by the authenticated default; use $CONFIG_DIR/client-anytls-sing-box-outbound.json or explicitly redeploy with MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1"
+			fi
 			fail "share link is missing or unsafe: $path"
 		fi
 	done
@@ -265,11 +393,7 @@ show_logs() {
 	fi
 	case "$(detect_init)" in
 		systemd) exec "$SYSTEMCTL" status "$SERVICE" --no-pager --lines "$lines" ;;
-		openrc)
-			command -v logread >/dev/null 2>&1 || fail "logread is unavailable on this OpenRC system"
-			logread | grep 'mini-singbox' | tail -n "$lines"
-			;;
-		*) fail "cannot detect systemd or OpenRC" ;;
+		*) fail "a running systemd environment is required" ;;
 	esac
 }
 
@@ -285,8 +409,13 @@ case "$command" in
 		run_check
 		;;
 	certificate)
-		[ "$#" -eq 1 ] || fail "certificate does not accept arguments"
-		show_certificate
+		if [ "$#" -eq 1 ]; then
+			show_certificate
+		elif [ "$#" -eq 2 ] && [ "$2" = "renew" ]; then
+			renew_certificate
+		else
+			fail "certificate accepts only the optional renew subcommand"
+		fi
 		;;
 	qr)
 		[ "$#" -le 2 ] || fail "qr accepts at most one protocol"

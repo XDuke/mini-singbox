@@ -9,6 +9,19 @@
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
 自动更新守护进程。`v1.1.0` 内置官方 sing-box `v1.13.18`。
 
+## main 分支安全整改（待下一个正式版）
+
+- 修复官方 `curl | bash` 命令在 `set -u` 下读取未定义 `BASH_SOURCE` 的问题，并加入
+  标准输入执行回归测试；
+- bootstrap 独立内置 minisign 公钥，不再从待验证的 Release 标签取得信任根；
+- AnyTLS 自签名部署默认不再生成无法携带证书认证信息的通用 URI/二维码，改为输出
+  内嵌服务器证书且保持 `insecure=false` 的 sing-box 出站配置；
+- `generate --force` 改为整组事务：所有新文件完成落盘和内容校验后才清理旧副本，
+  中途失败会逆序恢复；
+- 卸载增加独立的 `PURGE_BACKUPS=1`，并严格校验所有布尔开关；
+- 正式支持范围收敛为具备完整部署、回滚和 CI 覆盖的 systemd，移除旧的重复
+  `install.sh`/OpenRC 发布入口。
+
 ## v1.1.0 更新
 
 `v1.1.0` 是一次面向小内存 VPS 的运维与网络安全升级，普通升级会保留现有 UUID、
@@ -38,12 +51,13 @@
 - 自动探测公网 IPv4/IPv6，并从经过 TLS 1.3、HTTP/2 和证书验证的候选中选择
   Reality 握手目标；
 - 支持共享 NAT 的公网端口与内部监听端口分离；
-- 自动生成三种标准分享链接、PNG 二维码和终端二维码；
+- 自动生成 Reality、Hysteria2 分享链接和二维码，以及经过证书认证的 AnyTLS
+  sing-box 出站配置；
 - 只下载当前精确版本的 CI 静态二进制，不在小虚拟机编译；
 - 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
 - 部署后离线检测内核、cgroup 有效内存和 TCP 能力，只应用可验证、可持久化、可回滚的
   安全核心调优；
-- systemd/OpenRC 专用非 root 用户，默认 `GOMAXPROCS=1`、`GOMEMLIMIT=48MiB`、
+- systemd 专用非 root 用户，默认 `GOMAXPROCS=1`、`GOMEMLIMIT=48MiB`、
   `GOGC=70`。
 
 ## 协议和默认端口
@@ -52,7 +66,7 @@
 |---|---:|---|---|
 | VLESS Reality | `20001/tcp` | TCP + Reality | `vless://`、二维码 |
 | Hysteria2 | `20002/udp` | QUIC/UDP + TLS 1.3 | `hysteria2://`、二维码 |
-| AnyTLS | `20003/tcp` | TCP + TLS 1.3 | `anytls://`、二维码 |
+| AnyTLS | `20003/tcp` | TCP + TLS 1.3 | 认证证书的 sing-box 出站配置 |
 
 Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。共享 NAT
 服务器可以使用任意不同的公网端口映射到以上内部端口。
@@ -66,8 +80,9 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 ```
 
 `bootstrap.sh` 只负责解析 GitHub 最新正式版、克隆精确标签并启动部署器。它拒绝
-预发布和轻量标签，核对官方仓库、标签提交和干净工作区；`deploy.sh` 随后验证
-minisign、SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二进制，不编译。
+预发布和轻量标签，核对官方仓库、标签提交和干净工作区，并使用入口脚本内置的独立
+minisign 公钥；`deploy.sh` 随后验证 minisign、SHA-256、ELF、版本和完整 Git 提交。
+目标虚拟机只下载静态二进制，不编译。
 
 普通重跑会先备份并保留 UUID、密码、Reality 私钥和证书；只有显式设置
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
@@ -103,7 +118,7 @@ sudo ./scripts/deploy.sh
 4. 检查端口占用和协议端口冲突；
 5. 下载正式 Release 的静态二进制；
 6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
-7. 生成安全凭据、证书、分享链接和二维码；
+7. 生成安全凭据、证书、Reality/Hysteria2 二维码和认证证书的 AnyTLS 客户端配置；
 8. 安装非 root 服务并检查配置、监听端口和启动状态；
 9. 为 Reality/AnyTLS 自动执行保守的 TCP 检测、计划、应用和回读验证；
 10. 为已有安装和 TCP 调优分别保留精确回滚状态。
@@ -145,6 +160,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 只启用 AnyTLS | `MINI_SINGBOX_PROTOCOLS=anytls` |
 | Reality + AnyTLS | `MINI_SINGBOX_PROTOCOLS=reality,anytls` |
 | 关闭部署后 TCP 调优 | `MINI_SINGBOX_AUTO_TUNE=0` |
+| 危险兼容：生成 AnyTLS 通用二维码 | `MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` |
 
 例如重新生成全部凭据：
 
@@ -154,6 +170,10 @@ MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL https://raw.githu
 
 普通升级不会轮换 UUID、密码或私钥。只有 `MINI_SINGBOX_REGENERATE=1` 会使旧客户端
 配置失效。修改 NAT 公网端口时使用 `MINI_SINGBOX_REFRESH_DELIVERY=1`。
+
+AnyTLS 通用 URI 没有跨客户端统一的自签证书 pin 字段，因此默认二维码会被安全地
+跳过。`MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` 生成的链接带有 `insecure=1`，只能
+用于明确接受中间人风险的临时兼容测试，不是推荐配置。
 
 ## 内核与项目升级
 
@@ -189,8 +209,12 @@ mini-singbox 与 `sing_box_version`。
 | `MINI_SINGBOX_AUTO_TUNE` | `1` | `0` 关闭部署后的保守 TCP 调优 |
 | `MINI_SINGBOX_REGENERATE` | `0` | `1` 备份并重新生成配置 |
 | `MINI_SINGBOX_REFRESH_DELIVERY` | `0` | `1` 保留凭据刷新交付文件 |
-| `MINI_SINGBOX_RELEASE_TAG` | 当前源码标签 | 高级用途；仍校验完整提交 |
-| `MINI_SINGBOX_MINISIGN_PUBKEY_FILE` | 仓库固定公钥 | 覆盖签名公钥路径 |
+| `MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE` | `0` | 危险兼容开关；`1` 才生成未认证证书的 AnyTLS URI/二维码 |
+| `MINI_SINGBOX_BACKUP_KEEP` | `5` | 成功部署后保留最近 1–50 份受管回滚备份 |
+
+直接运行已审阅 Git checkout 内的 `scripts/deploy.sh` 时还可使用
+`MINI_SINGBOX_RELEASE_TAG` 和 `MINI_SINGBOX_MINISIGN_PUBKEY_FILE`。短命令 bootstrap
+会固定前者为解析出的精确标签，并把后者固定为入口脚本内置公钥，不接受环境覆盖。
 
 关闭自动探测时必须显式提供所需值：
 
@@ -215,10 +239,11 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | `sudo mini-singboxctl status` | 检查版本、配置、服务、内存、任务、端口和证书 |
 | `sudo mini-singboxctl check` | 仅校验配置，不启动监听器 |
 | `sudo mini-singboxctl certificate` | 检查 TLS 证书到期时间 |
+| `sudo mini-singboxctl certificate renew` | 只续 TLS 证书并重建 pin 交付；失败自动恢复旧配置 |
 | `sudo mini-singboxctl qr reality` | Reality 二维码及其协议链接 |
 | `sudo mini-singboxctl qr hy2` | Hysteria2 二维码及其协议链接 |
-| `sudo mini-singboxctl qr anytls` | AnyTLS 二维码及其协议链接 |
-| `sudo mini-singboxctl qr all` | 依次显示全部启用协议二维码和链接 |
+| `sudo mini-singboxctl qr anytls` | 默认说明认证配置路径；只有危险兼容开关开启后才显示二维码 |
+| `sudo mini-singboxctl qr all` | 依次显示可安全生成的启用协议二维码和链接，默认跳过 AnyTLS |
 | `sudo mini-singboxctl logs 100` | 最近 100 行服务状态和日志 |
 | `sudo mini-singboxctl tune detect` | 只检测环境、有效 RAM、工作负载和系统能力 |
 | `sudo mini-singboxctl tune plan` | 生成逐项 TCP 调优计划，不修改系统 |
@@ -229,7 +254,14 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | `sudo mini-singboxctl tune rollback` | 精确恢复应用前原值并移除本项目持久化文件 |
 | `sudo mini-singboxctl version` | 二进制版本和构建身份 |
 
-二维码及其下方链接包含完整客户端凭据，不要截图或复制到公开聊天、Issue 或日志。
+二维码、其下方链接和 AnyTLS 出站配置都包含完整客户端凭据，不要截图或复制到公开
+聊天、Issue 或日志。AnyTLS 推荐把
+`/etc/mini-singbox/client-anytls-sing-box-outbound.json` 合并到客户端 `outbounds`；文件
+内嵌服务器证书并保持证书验证开启。
+
+自签名证书有效期为 365 天。续证命令不会改变 UUID、协议密码或 Reality 密钥；它先在
+临时目录生成并校验完整交付文件，备份当前配置，停服切换并确认服务稳定，失败则恢复。
+证书 pin 已变化，因此 Hysteria2 和 AnyTLS 客户端必须重新导入新的交付文件。
 
 直接控制 systemd：
 
@@ -238,13 +270,6 @@ sudo systemctl status mini-singbox --no-pager
 sudo systemctl restart mini-singbox
 sudo journalctl -u mini-singbox -n 100 --no-pager
 sudo journalctl -u mini-singbox -f
-```
-
-OpenRC：
-
-```sh
-sudo rc-service mini-singbox status
-sudo rc-service mini-singbox restart
 ```
 
 ## 部署后自动 TCP 调优
@@ -284,15 +309,20 @@ sudo mini-singboxctl tune plan --bw 500 --rtt 80
 |---|---:|---|
 | `/etc/mini-singbox/config.json` | `0600` | 严格服务端配置 |
 | `/etc/mini-singbox/client-info.json` | `0600` | 客户端信息和分享 URI |
+| `/etc/mini-singbox/client-anytls-sing-box-outbound.json` | `0600` | 内嵌服务器证书的 AnyTLS sing-box 出站配置 |
 | `/etc/mini-singbox/deployment-info.txt` | `0600` | 非凭据部署摘要 |
 | `/etc/mini-singbox/reality.key` | `0600` | Reality 私钥 |
 | `/etc/mini-singbox/tls.key` | `0600` | TLS 私钥 |
 | `/etc/mini-singbox/tls.crt` | `0644` | 365 天自签名证书 |
-| `/etc/mini-singbox/share-*.txt` | `0600` | 各协议分享链接 |
-| `/etc/mini-singbox/share-*.png` | `0600` | 各协议二维码 |
+| `/etc/mini-singbox/share-*.txt` | `0600` | Reality/Hysteria2 分享链接；AnyTLS 仅危险兼容模式生成 |
+| `/etc/mini-singbox/share-*.png` | `0600` | Reality/Hysteria2 二维码；AnyTLS 仅危险兼容模式生成 |
 | `/var/lib/mini-singbox/tune/` | `0700` | root 专属调优基线、活动状态和历史回滚记录 |
 | `/etc/sysctl.d/90-mini-singbox-tune.conf` | `0644` | 仅含本项目实际拥有的 TCP sysctl |
-| `/var/backups/mini-singbox/` | `0700` | 部署前回滚备份 |
+| `/var/backups/mini-singbox/` | `0700` | 部署前回滚备份，可能包含仍有效的历史凭据 |
+
+成功部署后只清理名称和项目生成格式完全匹配的旧备份，并始终保留本次回滚点；默认保留
+最近 5 份，可用 `MINI_SINGBOX_BACKUP_KEEP` 调整。卸载时除非显式设置
+`PURGE_BACKUPS=1`，这些历史凭据仍会保留。
 
 ## 资源边界
 
@@ -309,7 +339,12 @@ TasksMax=64
 `GOMEMLIMIT` 主要约束 Go Runtime 管理的内存，不是容器总内存硬限制，也不包含全部
 内核 Socket 内存。
 
-2026-08-09 的 1 vCPU/128 MiB 共享 NAT 实机测试中，三协议同时运行时观测到：
+普通 VM 使用完整 systemd 沙箱；受限 LXC/容器会使用 container-compatible unit，保留
+非 root、空 capabilities、`NoNewPrivileges`、内存和任务上限，但依赖外层容器提供挂载
+命名空间与 seccomp 边界。两种 profile 会写入 `deployment-info.txt`，不宣称保护等价。
+
+2026-08-09 的 1 vCPU/128 MiB 共享 NAT 实机测试基于 `v1.0.0`（sing-box
+`v1.13.16`、Go `1.26.5`）；三协议同时运行时观测到：
 
 - 收/发吞吐峰值约 `57.20/72.17 Mbps`；
 - 服务 CPU 峰值 `18%`，流量期间内存峰值 `41.4 MiB`；
@@ -317,8 +352,9 @@ TasksMax=64
 - TCP 重传率约 `0.061%`；
 - UDP/IP/网卡错误、丢包、服务重启、警告和 OOM 均为 `0`。
 
-以上是该参考环境的实测值，不是对所有线路和宿主机的性能保证。验证摘要见
-[正式版验证记录](docs/validation.md)。
+以上是旧版参考环境的实测值，不是对 `v1.1.0` 或所有线路、宿主机的性能保证。
+`v1.1.0` 当前确认的是 128 MiB CI 容器内的生成、检查和短时空载启动，不把它表述为
+真实流量或长时间验收。旧版验证摘要见[正式版验证记录](docs/validation.md)。
 
 ## Docker Compose（仅开发和验证）
 
@@ -393,15 +429,21 @@ go version -m mini-singbox-linux-amd64
 sudo mini-singbox-uninstall
 ```
 
-永久删除配置和凭据：
+删除当前配置、密钥和调优状态（保留历史部署备份）：
 
 ```sh
 sudo env PURGE=1 mini-singbox-uninstall
 ```
 
-卸载会先恢复 mini-singbox 管理的 TCP 参数，再删除程序。`PURGE=1` 不可由卸载脚本
-恢复；如仍需旧客户端或调优审计记录，应先备份 `/etc/mini-singbox` 和
-`/var/lib/mini-singbox`。
+永久删除当前数据和历史备份中的凭据：
+
+```sh
+sudo env PURGE=1 PURGE_BACKUPS=1 mini-singbox-uninstall
+```
+
+卸载会先恢复 mini-singbox 管理的 TCP 参数，再删除程序。两个开关只接受 `0` 或 `1`，
+脚本会在删除前列出固定目标路径。`PURGE=1` 和 `PURGE_BACKUPS=1` 均不可由卸载脚本
+恢复；如仍需旧客户端、调优审计或回滚记录，应先离线备份对应目录。
 
 ## 安全边界与许可
 

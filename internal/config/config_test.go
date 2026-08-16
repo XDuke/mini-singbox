@@ -23,6 +23,24 @@ import (
 	"github.com/sagernet/sing-box/option"
 )
 
+func TestDecodeFileRejectsSymbolicLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires additional Windows privilege")
+	}
+	directory := t.TempDir()
+	target := filepath.Join(directory, "config-target.json")
+	if err := os.WriteFile(target, []byte(`{"schema_version":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "config.json")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeFile(link); err == nil || !strings.Contains(err.Error(), "symbolic links are not allowed") {
+		t.Fatalf("DecodeFile() error = %v", err)
+	}
+}
+
 func TestDecodeRejectsUnknownField(t *testing.T) {
 	_, err := Decode(strings.NewReader(`{
 		"schema_version": 1,

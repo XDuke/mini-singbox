@@ -29,9 +29,45 @@ command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
+prune_managed_backups() {
+	unsorted_list="$WORK_DIR/managed-backups.unsorted"
+	managed_list="$WORK_DIR/managed-backups.txt"
+	candidate_list="$WORK_DIR/managed-backup-candidates.txt"
+	current_name="${BACKUP_DIR#"$BACKUP_ROOT/"}"
+	if ! find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d \
+		-printf '%f\n' > "$unsorted_list"; then
+		warn "could not enumerate deployment backups; retention was not changed"
+		return 0
+	fi
+	grep -E '^20[0-9]{6}T[0-9]{6}Z-[0-9a-f]{12}-[0-9]+$' "$unsorted_list" | \
+		LC_ALL=C sort > "$managed_list"
+	managed_count="$(awk 'END { print NR + 0 }' "$managed_list")"
+	if [ "$managed_count" -le "$BACKUP_KEEP" ]; then
+		return 0
+	fi
+	remove_count=$((managed_count - BACKUP_KEEP))
+	grep -Fvx "$current_name" "$managed_list" > "$candidate_list" || true
+	log "Pruning $remove_count old managed deployment backup(s); keeping $BACKUP_KEEP"
+	head -n "$remove_count" "$candidate_list" | while IFS= read -r backup_name; do
+		if ! printf '%s\n' "$backup_name" | \
+			grep -Eq '^20[0-9]{6}T[0-9]{6}Z-[0-9a-f]{12}-[0-9]+$'; then
+			warn "ignoring unrecognized backup directory name: $backup_name"
+			continue
+		fi
+		backup_path="$BACKUP_ROOT/$backup_name"
+		case "$backup_path" in
+			/var/backups/mini-singbox/20*) ;;
+			*) warn "refusing unsafe backup path: $backup_path"; continue ;;
+		esac
+		if ! rm -rf -- "$backup_path"; then
+			warn "could not remove old deployment backup: $backup_path"
+		fi
+	done
+}
+
 [ "$(id -u)" -eq 0 ] || fail "run as root (use sudo env ... ./scripts/deploy.sh)"
 [ "$(uname -s)" = "Linux" ] || fail "this deployer supports Linux only"
-command_exists systemctl || fail "systemd is required; use the OpenRC packaging manually on non-systemd systems"
+command_exists systemctl || fail "systemd is required; OpenRC is not a supported deployment target"
 [ -d /run/systemd/system ] || fail "systemd is not running"
 
 SCRIPT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)"
@@ -94,6 +130,9 @@ PUBLIC_ANYTLS_PORT="${MINI_SINGBOX_PUBLIC_ANYTLS_PORT:-}"
 REFRESH_DELIVERY="${MINI_SINGBOX_REFRESH_DELIVERY:-0}"
 AUTO_DETECT="${MINI_SINGBOX_AUTO_DETECT:-1}"
 AUTO_TUNE="${MINI_SINGBOX_AUTO_TUNE:-1}"
+REGENERATE="${MINI_SINGBOX_REGENERATE:-0}"
+ALLOW_INSECURE_ANYTLS_SHARE="${MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE:-0}"
+BACKUP_KEEP="${MINI_SINGBOX_BACKUP_KEEP:-5}"
 IP_FAMILY="${MINI_SINGBOX_IP_FAMILY:-auto}"
 REALITY_CANDIDATES="${MINI_SINGBOX_REALITY_CANDIDATES:-www.microsoft.com,www.amazon.com,www.mozilla.org,www.cloudflare.com}"
 NEEDS_GENERATION=0
@@ -109,11 +148,29 @@ case "$REFRESH_DELIVERY" in
 	0|1) ;;
 	*) fail "MINI_SINGBOX_REFRESH_DELIVERY must be 0 or 1" ;;
 esac
+case "$AUTO_DETECT" in
+	0|1) ;;
+	*) fail "MINI_SINGBOX_AUTO_DETECT must be 0 or 1" ;;
+esac
 case "$AUTO_TUNE" in
 	0|1) ;;
 	*) fail "MINI_SINGBOX_AUTO_TUNE must be 0 or 1" ;;
 esac
-if [ ! -f "$CONFIG_DIR/config.json" ] || [ "${MINI_SINGBOX_REGENERATE:-0}" = "1" ]; then
+case "$REGENERATE" in
+	0|1) ;;
+	*) fail "MINI_SINGBOX_REGENERATE must be 0 or 1" ;;
+esac
+case "$ALLOW_INSECURE_ANYTLS_SHARE" in
+	0|1) ;;
+	*) fail "MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE must be 0 or 1" ;;
+esac
+case "$BACKUP_KEEP" in
+	''|*[!0-9]*) fail "MINI_SINGBOX_BACKUP_KEEP must be an integer from 1 to 50" ;;
+esac
+if [ "$BACKUP_KEEP" -lt 1 ] || [ "$BACKUP_KEEP" -gt 50 ]; then
+	fail "MINI_SINGBOX_BACKUP_KEEP must be in range 1-50"
+fi
+if [ ! -f "$CONFIG_DIR/config.json" ] || [ "$REGENERATE" = "1" ]; then
 	NEEDS_GENERATION=1
 fi
 
@@ -136,6 +193,7 @@ if command_exists apt-get; then
 		missing_packages="$missing_packages coreutils"
 	fi
 	command_exists runuser || missing_packages="$missing_packages util-linux"
+	command_exists find || missing_packages="$missing_packages findutils"
 	if ! command_exists ss || ! command_exists ip; then
 		missing_packages="$missing_packages iproute2"
 	fi
@@ -450,6 +508,18 @@ preflight_requested_ports() {
 	log "Requested protocol ports passed the local listener preflight"
 }
 
+if [ "$NEEDS_GENERATION" -eq 0 ] && \
+	jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null 2>&1; then
+	if [ ! -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] || \
+		[ -L "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] || \
+		{ [ "$ALLOW_INSECURE_ANYTLS_SHARE" -eq 0 ] && \
+			{ [ -e "$CONFIG_DIR/share-anytls.txt" ] || [ -L "$CONFIG_DIR/share-anytls.txt" ] || \
+				[ -e "$CONFIG_DIR/share-anytls.png" ] || [ -L "$CONFIG_DIR/share-anytls.png" ]; }; }; then
+		REFRESH_DELIVERY=1
+		log "Refreshing AnyTLS delivery to enforce authenticated TLS defaults"
+	fi
+fi
+
 if [ "$REFRESH_DELIVERY" -eq 1 ] && [ "$NEEDS_GENERATION" -eq 0 ]; then
 	[ -f "$CONFIG_DIR/config.json" ] || fail "cannot refresh delivery without $CONFIG_DIR/config.json"
 	if [ -f "$CONFIG_DIR/client-info.json" ]; then
@@ -600,7 +670,8 @@ rollback() {
 	if [ "${CONFIG_REPLACED:-0}" -eq 0 ] && [ "$HAD_CONFIG" -eq 1 ]; then
 		if [ "${DELIVERY_REPLACED:-0}" -eq 1 ]; then
 			for delivery_file in \
-				client-info.json share-reality.txt share-hysteria2.txt share-anytls.txt \
+				client-info.json client-anytls-sing-box-outbound.json \
+				share-reality.txt share-hysteria2.txt share-anytls.txt \
 				share-reality.png share-hysteria2.png share-anytls.png; do
 				if [ -f "$BACKUP_DIR/config/$delivery_file" ]; then
 					cp -a "$BACKUP_DIR/config/$delivery_file" "$CONFIG_DIR/$delivery_file"
@@ -761,7 +832,8 @@ if [ "$NEEDS_GENERATION" -eq 1 ]; then
 		--public-anytls-port "$PUBLIC_ANYTLS_PORT" \
 		--reality-server-name "$REALITY_SERVER_NAME" \
 		--reality-handshake "$REALITY_HANDSHAKE" \
-		--tls-san "$TLS_SAN"
+		--tls-san "$TLS_SAN" \
+		--allow-insecure-anytls-share="$ALLOW_INSECURE_ANYTLS_SHARE"
 	runuser -u "$SERVICE_USER" -- "$BUILD_BINARY" check -c "$GENERATED_DIR/config.json"
 	if [ -f "$GENERATED_DIR/share-reality.txt" ] || \
 		[ -f "$GENERATED_DIR/share-hysteria2.txt" ] || \
@@ -789,7 +861,8 @@ else
 			--public-address "$PUBLIC_ADDRESS" \
 			--reality-port "$PUBLIC_REALITY_PORT" \
 			--hy2-port "$PUBLIC_HY2_PORT" \
-			--anytls-port "$PUBLIC_ANYTLS_PORT"
+			--anytls-port "$PUBLIC_ANYTLS_PORT" \
+			--allow-insecure-anytls-share="$ALLOW_INSECURE_ANYTLS_SHARE"
 		log "Rendering refreshed local QR images without printing credentials"
 		for qr_source in share-reality share-hysteria2 share-anytls; do
 			if [ -f "$DELIVERY_DIR/$qr_source.txt" ]; then
@@ -853,6 +926,7 @@ if [ "$CONFIG_REPLACED" -eq 1 ]; then
 	install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR"
 	for generated_file in \
 		config.json client-info.json reality.key tls.key tls.crt \
+		client-anytls-sing-box-outbound.json \
 		share-reality.txt share-hysteria2.txt share-anytls.txt \
 		share-reality.png share-hysteria2.png share-anytls.png; do
 		if [ -f "$GENERATED_DIR/$generated_file" ]; then
@@ -868,7 +942,8 @@ fi
 
 if [ "$DELIVERY_REPLACED" -eq 1 ]; then
 	for delivery_file in \
-		client-info.json share-reality.txt share-hysteria2.txt share-anytls.txt \
+		client-info.json client-anytls-sing-box-outbound.json \
+		share-reality.txt share-hysteria2.txt share-anytls.txt \
 		share-reality.png share-hysteria2.png share-anytls.png; do
 		if [ -f "$DELIVERY_DIR/$delivery_file" ]; then
 			install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
@@ -978,24 +1053,48 @@ if jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null; then
 fi
 
 HAS_SHARE_LINKS=0
-MISSING_SHARE_LINKS=0
+MISSING_DELIVERY=0
 for protocol_and_source in \
-	"reality:share-reality" "hy2:share-hysteria2" "anytls:share-anytls"; do
+	"reality:share-reality" "hy2:share-hysteria2"; do
 	protocol="${protocol_and_source%%:*}"
 	qr_source="${protocol_and_source#*:}"
 	case ",$LISTENER_PROTOCOLS," in
 		*,"$protocol",*)
-			if [ -f "$CONFIG_DIR/$qr_source.txt" ] && [ -f "$CONFIG_DIR/$qr_source.png" ]; then
+			if [ -f "$CONFIG_DIR/$qr_source.txt" ] && [ ! -L "$CONFIG_DIR/$qr_source.txt" ] && \
+				[ -f "$CONFIG_DIR/$qr_source.png" ] && [ ! -L "$CONFIG_DIR/$qr_source.png" ]; then
 				HAS_SHARE_LINKS=1
 			else
-				MISSING_SHARE_LINKS=1
+				MISSING_DELIVERY=1
 				warn "missing share link or QR image for enabled protocol $protocol"
 			fi
 			;;
 	esac
 done
-if [ "$CONFIG_REPLACED" -eq 1 ] && [ "$MISSING_SHARE_LINKS" -eq 1 ]; then
-	fail "new configuration did not produce every enabled protocol QR image"
+case ",$LISTENER_PROTOCOLS," in
+	*,anytls,*)
+		if [ ! -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] || \
+			[ -L "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ]; then
+			MISSING_DELIVERY=1
+			warn "missing authenticated AnyTLS sing-box outbound file"
+		fi
+		if [ "$ALLOW_INSECURE_ANYTLS_SHARE" -eq 1 ]; then
+			if [ -f "$CONFIG_DIR/share-anytls.txt" ] && [ ! -L "$CONFIG_DIR/share-anytls.txt" ] && \
+				[ -f "$CONFIG_DIR/share-anytls.png" ] && [ ! -L "$CONFIG_DIR/share-anytls.png" ]; then
+				HAS_SHARE_LINKS=1
+			else
+				MISSING_DELIVERY=1
+				warn "explicitly requested insecure AnyTLS share link or QR image is missing"
+			fi
+		elif [ -e "$CONFIG_DIR/share-anytls.txt" ] || [ -L "$CONFIG_DIR/share-anytls.txt" ] || \
+			[ -e "$CONFIG_DIR/share-anytls.png" ] || [ -L "$CONFIG_DIR/share-anytls.png" ]; then
+			MISSING_DELIVERY=1
+			warn "unauthenticated AnyTLS share artifacts remain while insecure sharing is disabled"
+		fi
+		;;
+esac
+if { [ "$CONFIG_REPLACED" -eq 1 ] || [ "$DELIVERY_REPLACED" -eq 1 ]; } && \
+	[ "$MISSING_DELIVERY" -eq 1 ]; then
+	fail "new client delivery files did not satisfy the authenticated delivery policy"
 fi
 
 if [ "$AUTO_TUNE" -eq 1 ]; then
@@ -1008,6 +1107,10 @@ if [ "$AUTO_TUNE" -eq 1 ]; then
 	fi
 else
 	log "Automatic TCP tuning disabled by MINI_SINGBOX_AUTO_TUNE=0"
+fi
+
+if ! prune_managed_backups; then
+	warn "backup retention encountered an error; existing backups were left in place"
 fi
 
 DEPLOYMENT_SUCCEEDED=1
@@ -1036,7 +1139,10 @@ if [ "$HAS_SHARE_LINKS" -eq 1 ]; then
 		fi
 	done
 else
-	warn "share links or QR images are absent; use MINI_SINGBOX_REGENERATE=1 once to generate them"
+	warn "no QR-compatible share links are available for the enabled protocols"
+fi
+if [ -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ]; then
+	printf 'AnyTLS client: %s/client-anytls-sing-box-outbound.json (authenticated sing-box outbound; sensitive)\n' "$CONFIG_DIR"
 fi
 if [ -f "$CONFIG_DIR/deployment-info.txt" ]; then
 	printf 'deployment:    %s/deployment-info.txt\n' "$CONFIG_DIR"

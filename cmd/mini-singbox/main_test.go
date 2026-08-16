@@ -102,3 +102,30 @@ func TestDeliverCommandHidesSecrets(t *testing.T) {
 		t.Fatalf("deliver output leaked secret material: %s", stdout.String())
 	}
 }
+
+func TestRenewCertificateCommandHidesSecrets(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	serverDirectory := filepath.Join(t.TempDir(), "server")
+	code := execute([]string{
+		"generate", "--output", serverDirectory, "--protocols", "hy2,anytls",
+		"--listen", "127.0.0.1", "--tls-san", "server.example",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute(generate) = %d, stderr = %s", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	stagingDirectory := filepath.Join(t.TempDir(), "renewed")
+	code = execute([]string{
+		"renew-certificate", "-c", filepath.Join(serverDirectory, "config.json"),
+		"--output", stagingDirectory, "--public-address", "203.0.113.10",
+		"--hy2-port", "25421", "--anytls-port", "36279",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("execute(renew-certificate) = %d, stderr = %s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "password") || strings.Contains(stdout.String(), "hysteria2://") ||
+		strings.Contains(stdout.String(), "anytls://") || strings.Contains(stdout.String(), "BEGIN CERTIFICATE") {
+		t.Fatalf("renew-certificate output leaked secret material: %s", stdout.String())
+	}
+}

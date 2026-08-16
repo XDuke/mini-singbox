@@ -19,10 +19,7 @@ func checkFile(path string, kind fileKind) error {
 		return fieldError(path, "file does not exist or is a broken link", "create a readable regular file at this path")
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		info, err = os.Stat(path)
-		if err != nil {
-			return fieldError(path, "symbolic link target is missing", "repair the link or use a regular file")
-		}
+		return fieldError(path, "symbolic links are not allowed", "use a regular file owned by the service account")
 	}
 	if info.IsDir() {
 		return fieldError(path, "path is a directory", "use a regular file")

@@ -154,12 +154,10 @@ jobs:
             examples/config.json
             release/minisign.pub
             scripts/deploy.sh
-            scripts/install.sh
             scripts/uninstall.sh
             scripts/mini-singboxctl
             packaging/systemd/mini-singbox.service
             packaging/systemd/mini-singbox-container.service
-            packaging/openrc/mini-singbox
           )
           duplicate_names="$(printf '%s\n' "${release_files[@]}" | sed 's|.*/||' | sort | uniq -d)"
           test -z "$duplicate_names"
@@ -207,12 +205,10 @@ jobs:
             examples/config.json
             release/minisign.pub
             scripts/deploy.sh
-            scripts/install.sh
             scripts/uninstall.sh
             scripts/mini-singboxctl
             packaging/systemd/mini-singbox.service
             packaging/systemd/mini-singbox-container.service
-            packaging/openrc/mini-singbox
           )
           duplicate_names="$(printf '%s\n' "${files[@]}" | sed 's|.*/||' | sort | uniq -d)"
           test -z "$duplicate_names"

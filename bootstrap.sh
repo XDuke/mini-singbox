@@ -4,6 +4,7 @@ set -Eeuo pipefail
 readonly REPOSITORY="XDuke/mini-singbox"
 readonly REPOSITORY_URL="https://github.com/${REPOSITORY}.git"
 readonly LATEST_RELEASE_URL="https://github.com/${REPOSITORY}/releases/latest"
+readonly PINNED_MINISIGN_PUBLIC_KEY="RWTdosnHY0/ogpyGB9SURrdhWQxdLkNxuNc9u08FwdA41OmoFI/zoSEg"
 temporary_directory=""
 
 fail() {
@@ -80,6 +81,8 @@ forward_deployment_environment() {
 		MINI_SINGBOX_AUTO_TUNE
 		MINI_SINGBOX_REGENERATE
 		MINI_SINGBOX_REFRESH_DELIVERY
+		MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE
+		MINI_SINGBOX_BACKUP_KEEP
 	)
 	for name in "${names[@]}"; do
 		if [[ -v "$name" ]]; then
@@ -96,7 +99,7 @@ cleanup() {
 
 main() {
 	local version checkout_directory tag_ref tag_type
-	local tag_commit checkout_commit root_name
+	local tag_commit checkout_commit root_name pinned_public_key_file
 	local -a root_command=() deployment_environment=()
 
 	[[ "$#" -eq 0 ]] || fail "this command does not accept arguments; use MINI_SINGBOX_* variables"
@@ -144,6 +147,14 @@ main() {
 	while IFS= read -r -d '' root_name; do
 		deployment_environment+=("$root_name")
 	done < <(forward_deployment_environment)
+	pinned_public_key_file="$temporary_directory/minisign.pub"
+	(
+		umask 077
+		printf '%s\n%s\n' \
+			'untrusted comment: minisign public key 82E84F63C7C9A2DD' \
+			"$PINNED_MINISIGN_PUBLIC_KEY" > "$pinned_public_key_file"
+	)
+	deployment_environment+=("MINI_SINGBOX_MINISIGN_PUBKEY_FILE=$pinned_public_key_file")
 	deployment_environment+=("MINI_SINGBOX_RELEASE_TAG=$version")
 
 	printf '    source commit: %s\n' "$tag_commit"
@@ -152,6 +163,6 @@ main() {
 		"$checkout_directory/scripts/deploy.sh"
 }
 
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ "${BASH_SOURCE[0]:-$0}" == "$0" ]]; then
 	main "$@"
 fi
