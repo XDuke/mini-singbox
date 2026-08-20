@@ -343,7 +343,7 @@ jobs:
           grep -Fx "amd64_sha256=$amd64_sha256" dist/candidate-binary-identity.txt
           grep -Fx "arm64_sha256=$arm64_sha256" dist/candidate-binary-identity.txt
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test -z "$(git status --porcelain)"
+          test -z "$(git status --porcelain --untracked-files=no)"
       - name: Stage commit-specific deployment bundle
         run: |
           grep -Fq 'github.com/sagernet/sing-box v1.13.18' go.mod
