@@ -52,6 +52,8 @@ grep -Fq 'RWTdosnHY0/ogpyGB9SURrdhWQxdLkNxuNc9u08FwdA41OmoFI/zoSEg' bootstrap.sh
 grep -Fq 'release-metadata.txt' bootstrap.sh
 grep -Fq 'SHA256SUMS.minisig' bootstrap.sh
 grep -Fq 'apk add --no-cache' bootstrap.sh
+grep -Fq 'packages="ca-certificates coreutils curl"' bootstrap.sh
+grep -Fq 'command_exists curl || missing=1' bootstrap.sh
 grep -Fq 'MINI_SINGBOX_RUNTIME' bootstrap.sh
 grep -Fq 'MINI_SINGBOX_BUNDLE_DIR' bootstrap.sh
 grep -Fq 'mini-singbox-run minisign.pub' bootstrap.sh

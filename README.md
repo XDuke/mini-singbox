@@ -112,10 +112,11 @@ OpenRC 环境。Debian/Ubuntu 安装和以后升级运行：
 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
-Alpine 的 BusyBox `ash` 支持相同的失败传播，使用：
+Alpine 的 BusyBox `ash` 支持相同的失败传播；基础镜像自带 `wget`，入口启动后会自动补齐
+`curl`、CA 证书和校验工具，因此使用：
 
 ```sh
-sh -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | sh'
+sh -c 'set -o pipefail; wget -qO- https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | sh'
 ```
 
 非 root 环境会自动使用已有的 `sudo` 或 `doas`；最小 Alpine 容器两者都没有时应直接在

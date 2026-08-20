@@ -108,3 +108,33 @@ jobs:
             --prerelease \
             --title "mini-singbox candidate $short_commit" \
             --notes "Commit-specific CI candidate for low-memory validation. This is not a stable signed release."
+      - name: Public minimal-Alpine bootstrap smoke test
+        run: |
+          short_commit="$(printf '%s' "$HEAD_SHA" | cut -c1-12)"
+          release_tag="candidate-$short_commit"
+          docker run --rm \
+            -e MINI_SINGBOX_ALLOW_CANDIDATE=1 \
+            -e MINI_SINGBOX_VERSION="$release_tag" \
+            -e MINI_SINGBOX_RUNTIME=external \
+            -e MINI_SINGBOX_AUTO_DETECT=0 \
+            -e MINI_SINGBOX_AUTO_TUNE=0 \
+            -e MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10 \
+            -e MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com \
+            -e MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443 \
+            -e MINI_SINGBOX_TLS_SAN=203.0.113.10 \
+            -e EXPECTED_COMMIT="$HEAD_SHA" \
+            -e BOOTSTRAP_URL="https://raw.githubusercontent.com/$GITHUB_REPOSITORY/$HEAD_SHA/bootstrap.sh" \
+            alpine:3.24 /bin/sh -c '
+              set -eu
+              if command -v curl >/dev/null 2>&1; then
+                echo "minimal Alpine fixture unexpectedly contains curl" >&2
+                exit 1
+              fi
+              sh -c "set -o pipefail; wget -qO- \"$BOOTSTRAP_URL\" | sh"
+              /usr/local/bin/mini-singbox version | grep -Fx "mini-singbox $MINI_SINGBOX_VERSION"
+              /usr/local/bin/mini-singbox version | grep -Fx "git_commit $EXPECTED_COMMIT"
+              /usr/local/bin/mini-singbox check -c /etc/mini-singbox/config.json
+              grep -Fx "source_commit=$EXPECTED_COMMIT" /etc/mini-singbox/deployment-info.txt
+              grep -Fx "runtime=external" /etc/mini-singbox/deployment-info.txt
+              test -x /usr/local/bin/mini-singbox-run
+            '

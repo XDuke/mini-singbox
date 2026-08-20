@@ -68,6 +68,7 @@ run_root() {
 install_bootstrap_dependencies() {
 	need_minisign="$1"
 	missing=0
+	command_exists curl || missing=1
 	command_exists sha256sum || missing=1
 	if [ "$need_minisign" = "1" ] && ! command_exists minisign; then
 		missing=1
@@ -77,19 +78,20 @@ install_bootstrap_dependencies() {
 	if command_exists apt-get; then
 		printf '\n==> Installing bootstrap verification dependencies\n'
 		run_root env DEBIAN_FRONTEND=noninteractive apt-get update
-		packages="ca-certificates coreutils"
+		packages="ca-certificates coreutils curl"
 		[ "$need_minisign" = "1" ] && packages="$packages minisign"
 		# shellcheck disable=SC2086
 		run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages
 	elif command_exists apk; then
 		printf '\n==> Installing Alpine bootstrap verification dependencies\n'
-		packages="ca-certificates coreutils"
+		packages="ca-certificates coreutils curl"
 		[ "$need_minisign" = "1" ] && packages="$packages minisign"
 		# shellcheck disable=SC2086
 		run_root apk add --no-cache $packages
 	else
-		fail "sha256sum and release verification tools are required; automatic setup supports apt or apk"
+		fail "curl, sha256sum and release verification tools are required; automatic setup supports apt or apk"
 	fi
+	command_exists curl || fail "dependency installation did not provide curl"
 	command_exists sha256sum || fail "dependency installation did not provide sha256sum"
 	if [ "$need_minisign" = "1" ]; then
 		command_exists minisign || fail "dependency installation did not provide minisign"
@@ -230,15 +232,17 @@ cleanup() {
 main() {
 	[ "$#" -eq 0 ] || fail "this command does not accept arguments; use MINI_SINGBOX_* variables"
 	[ "$(uname -s)" = Linux ] || fail "this bootstrap supports Linux only"
-	command_exists curl || fail "curl is required"
 	command_exists mktemp || fail "mktemp is required"
 	command_exists env || fail "env is required"
 	case "${MINI_SINGBOX_ALLOW_CANDIDATE:-0}" in 0|1) ;; *) fail "MINI_SINGBOX_ALLOW_CANDIDATE must be 0 or 1" ;; esac
 
-	version="$(resolve_version)"
 	need_minisign=1
-	valid_candidate_version "$version" && need_minisign=0
+	if [ "${MINI_SINGBOX_ALLOW_CANDIDATE:-0}" = 1 ] && \
+		valid_candidate_version "${MINI_SINGBOX_VERSION:-}"; then
+		need_minisign=0
+	fi
 	install_bootstrap_dependencies "$need_minisign"
+	version="$(resolve_version)"
 
 	temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/mini-singbox-bootstrap.XXXXXX")" || fail "cannot create temporary directory"
 	case "$temporary_directory" in

@@ -22,10 +22,11 @@ Alpine Linux 3.23 and 3.24 use the same public one-line installer as the other
 supported hosts:
 
 ```sh
-sh -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | sh'
+sh -c 'set -o pipefail; wget -qO- https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | sh'
 ```
 
-The bootstrap installs only missing `apk` packages, verifies the signed Release
+BusyBox `wget` is used only for the first bootstrap hop. The bootstrap then
+installs missing `apk` packages including `curl` and CA certificates, verifies the signed Release
 bundle, and downloads the matching static amd64 or arm64 binary. It does not
 compile on the target. The OpenRC unit:
 
