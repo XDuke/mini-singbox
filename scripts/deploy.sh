@@ -34,6 +34,14 @@ command_exists() {
 	command -v "$1" >/dev/null 2>&1
 }
 
+find_supports_printf() {
+	command_exists find && find / -maxdepth 0 -printf '' >/dev/null 2>&1
+}
+
+ps_supports_pid_filter() {
+	command_exists ps && ps -o pid= -p "$$" >/dev/null 2>&1
+}
+
 running_in_container() {
 	[ -f /.dockerenv ] || [ -f /run/.containerenv ] || \
 		grep -Eqi '(docker|podman|lxc|openvz|containerd)' /proc/1/cgroup /proc/self/cgroup 2>/dev/null
@@ -381,7 +389,7 @@ if command_exists apt-get; then
 		missing_packages="$missing_packages coreutils"
 	fi
 	command_exists runuser || missing_packages="$missing_packages util-linux"
-	command_exists find || missing_packages="$missing_packages findutils"
+	find_supports_printf || missing_packages="$missing_packages findutils"
 	if ! command_exists ss || ! command_exists ip; then
 		missing_packages="$missing_packages iproute2"
 	fi
@@ -389,7 +397,7 @@ if command_exists apt-get; then
 	command_exists groupadd || missing_packages="$missing_packages passwd"
 	command_exists usermod || missing_packages="$missing_packages passwd"
 	command_exists getent || missing_packages="$missing_packages libc-bin"
-	command_exists ps || missing_packages="$missing_packages procps"
+	ps_supports_pid_filter || missing_packages="$missing_packages procps"
 	command_exists openssl || missing_packages="$missing_packages openssl"
 	command_exists qrencode || missing_packages="$missing_packages qrencode"
 	command_exists jq || missing_packages="$missing_packages jq"
@@ -417,13 +425,14 @@ elif command_exists apk; then
 		missing_packages="$missing_packages coreutils"
 	fi
 	command_exists runuser || missing_packages="$missing_packages runuser"
-	command_exists find || missing_packages="$missing_packages findutils"
+	find_supports_printf || missing_packages="$missing_packages findutils"
 	if ! command_exists ss || ! command_exists ip; then
 		missing_packages="$missing_packages iproute2"
 	fi
 	command_exists useradd || missing_packages="$missing_packages shadow"
-	command_exists ps || missing_packages="$missing_packages procps-ng"
-	command_exists pgrep || missing_packages="$missing_packages procps-ng"
+	if ! ps_supports_pid_filter || ! command_exists pgrep; then
+		missing_packages="$missing_packages procps-ng"
+	fi
 	command_exists openssl || missing_packages="$missing_packages openssl"
 	command_exists qrencode || missing_packages="$missing_packages libqrencode-tools"
 	command_exists jq || missing_packages="$missing_packages jq"
@@ -452,6 +461,8 @@ else
 			fail "missing $required_command; automatic package installation is supported only with apt or apk"
 	done
 fi
+find_supports_printf || fail "find must support -printf (install GNU findutils)"
+ps_supports_pid_filter || fail "ps must support -p and custom output (install procps/procps-ng)"
 
 valid_ipv4() {
 	printf '%s\n' "$1" | awk -F. '

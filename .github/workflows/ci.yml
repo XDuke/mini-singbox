@@ -130,6 +130,9 @@ jobs:
           grep -Fq 'the selected Podman engine is not rootless' scripts/mini-singbox-containerctl
           grep -Fq 'the selected Docker engine is not rootless' scripts/mini-singbox-containerctl
           grep -Fq 'libqrencode-tools' scripts/deploy.sh
+          grep -Fq 'find_supports_printf' scripts/deploy.sh
+          grep -Fq 'ps_supports_pid_filter' scripts/deploy.sh
+          grep -Fq 'image_reference_is_id' scripts/mini-singbox-containerctl
       - name: Compose syntax
         env:
           REALITY_SERVER_NAME: www.example.com

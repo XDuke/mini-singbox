@@ -55,6 +55,10 @@ validate_image_reference() {
 	case "$1" in ''|*[!A-Za-z0-9_./:@+-]*) fail "invalid image reference" ;; esac
 }
 
+image_reference_is_id() {
+	printf '%s\n' "$1" | grep -Eq '^(sha256:)?[0-9a-f]{64}$'
+}
+
 select_engine() {
 	if [ -n "${MINI_SINGBOX_CONTAINER_ENGINE:-}" ]; then
 		case "$MINI_SINGBOX_CONTAINER_ENGINE" in podman|docker) ENGINE="$MINI_SINGBOX_CONTAINER_ENGINE" ;; *) fail "container engine must be podman or docker" ;; esac
@@ -305,10 +309,11 @@ switch_image() {
 	require_config
 	old_image="$(configured_image)"
 	old_image_id="$("$ENGINE" image inspect --format '{{.Id}}' "$old_image" 2>/dev/null || printf '%s' "$old_image")"
-	case "$new_image" in
-		sha256:*) "$ENGINE" image inspect "$new_image" >/dev/null 2>&1 || fail "rollback image is no longer available locally" ;;
-		*) "$ENGINE" pull "$new_image" >/dev/null ;;
-	esac
+	if image_reference_is_id "$new_image"; then
+		"$ENGINE" image inspect "$new_image" >/dev/null 2>&1 || fail "rollback image is no longer available locally"
+	else
+		"$ENGINE" pull "$new_image" >/dev/null
+	fi
 	check_image "$new_image" >/dev/null
 	was_running=0
 	container_running && was_running=1
