@@ -28,6 +28,10 @@ OCI 容器运行链。正式标签会等 Alpine/OpenRC 与真实客户端验收�
   64 PID 上限；
 - 正式版发布流程增加 `linux/amd64`、`linux/arm64` GHCR 镜像、不可变 digest、GitHub
   provenance，以及 Alpine 3.23/3.24、OpenRC 和 rootless Podman CI 验收。
+- 容器首次部署如果没有显式提供公网端口，会醒目标记端口只是“按内部端口假定”，并在
+  `status` 中持续提示核对服务商 NAT 映射，避免监听正常却生成不可用的客户端配置；
+- `qr anytls` 与 `qr all` 现在始终显示 AnyTLS 已启用及认证配置文件路径；安全默认仍不
+  伪造无法携带自签证书信任信息的通用二维码。
 
 Alpine、外部 supervisor 和 OCI 的边界与测试方法见
 [Alpine 与容器运行指南](docs/alpine-container.md)。
@@ -102,6 +106,10 @@ Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或�
 
 Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。共享 NAT
 服务器可以使用任意不同的公网端口映射到以上内部端口。
+
+> 共享 NAT 容器必须先在服务商后台创建三条映射。脚本能自动获取公网 IP，但无法从
+> 容器内部猜出服务商分配的公网端口；只存在 SSH 映射时，三个代理协议都会不通。
+> 具体操作见[共享 NAT VPS 与端口映射](docs/nat-vps.md)。
 
 ## 一行部署
 
@@ -218,8 +226,9 @@ MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL https://raw.githu
 配置失效。修改 NAT 公网端口时使用 `MINI_SINGBOX_REFRESH_DELIVERY=1`。
 
 AnyTLS 通用 URI 没有跨客户端统一的自签证书 pin 字段，因此默认二维码会被安全地
-跳过。`MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` 生成的链接带有 `insecure=1`，只能
-用于明确接受中间人风险的临时兼容测试，不是推荐配置。
+跳过；`qr anytls`/`qr all` 仍会明确显示协议已启用、认证配置文件路径和导入方法。
+`MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` 生成的链接带有 `insecure=1`，只能用于
+明确接受中间人风险的临时兼容测试，不是推荐配置。
 
 ## 内核与项目升级
 
@@ -340,8 +349,8 @@ mini-singbox-containerctl uninstall
 | `sudo mini-singboxctl certificate renew` | 只续 TLS 证书并重建 pin 交付；失败自动恢复旧配置 |
 | `sudo mini-singboxctl qr reality` | Reality 二维码及其协议链接 |
 | `sudo mini-singboxctl qr hy2` | Hysteria2 二维码及其协议链接 |
-| `sudo mini-singboxctl qr anytls` | 默认说明认证配置路径；只有危险兼容开关开启后才显示二维码 |
-| `sudo mini-singboxctl qr all` | 依次显示可安全生成的启用协议二维码和链接，默认跳过 AnyTLS |
+| `sudo mini-singboxctl qr anytls` | 显示 AnyTLS 已启用、认证配置路径和导入方法；危险兼容开关开启后才显示二维码 |
+| `sudo mini-singboxctl qr all` | 依次显示所有启用协议；Reality/HY2 显示二维码和链接，AnyTLS 安全默认显示认证配置 |
 | `sudo mini-singboxctl logs 100` | 最近 100 行服务状态和日志 |
 | `sudo mini-singboxctl tune detect` | 只检测环境、有效 RAM、工作负载和系统能力 |
 | `sudo mini-singboxctl tune plan` | 生成逐项 TCP 调优计划，不修改系统 |

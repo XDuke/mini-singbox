@@ -156,6 +156,20 @@ if run_control qr all >/dev/null 2>&1; then
 fi
 mv "$CONFIG_DIRECTORY/share-anytls.txt.missing" "$CONFIG_DIRECTORY/share-anytls.txt"
 
+cp "$CONFIG_DIRECTORY/client-info.json" "$CONFIG_DIRECTORY/client-info.json.insecure"
+mv "$CONFIG_DIRECTORY/share-anytls.txt" "$CONFIG_DIRECTORY/share-anytls.txt.insecure"
+jq 'del(.anytls.share_uri)' "$CONFIG_DIRECTORY/client-info.json.insecure" > "$CONFIG_DIRECTORY/client-info.json"
+run_control qr anytls > "$WORK_DIRECTORY/qr-anytls-secure.txt"
+grep -Fq 'enabled: yes' "$WORK_DIRECTORY/qr-anytls-secure.txt"
+grep -Fq "authenticated config (sensitive): $CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" "$WORK_DIRECTORY/qr-anytls-secure.txt"
+grep -Fq 'QR: not generated because the standard URI cannot authenticate a self-signed certificate.' "$WORK_DIRECTORY/qr-anytls-secure.txt"
+[ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-anytls-secure.txt")" -eq 0 ]
+run_control qr all > "$WORK_DIRECTORY/qr-all-secure-anytls.txt"
+[ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-all-secure-anytls.txt")" -eq 2 ]
+grep -Fq 'authenticated config (sensitive):' "$WORK_DIRECTORY/qr-all-secure-anytls.txt"
+mv "$CONFIG_DIRECTORY/client-info.json.insecure" "$CONFIG_DIRECTORY/client-info.json"
+mv "$CONFIG_DIRECTORY/share-anytls.txt.insecure" "$CONFIG_DIRECTORY/share-anytls.txt"
+
 if run_control logs 0 >/dev/null 2>&1; then
 	echo 'logs accepted an invalid line count' >&2
 	exit 1

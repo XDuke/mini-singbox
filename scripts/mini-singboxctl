@@ -62,7 +62,7 @@ commands:
   certificate              show TLS certificate expiry and fail inside 30 days
   certificate renew        rotate only the TLS certificate/key with guarded rollback
   qr [reality|hy2|anytls|all]
-                           render sensitive protocol QR codes and sharing links
+                           show protocol delivery; secure AnyTLS uses an outbound file
   logs [LINES]             show 1-1000 recent service log lines (default 100)
   tune <detect|plan|apply|verify|status|rollback> [options]
                            inspect or manage conservative, reversible TCP tuning
@@ -355,7 +355,15 @@ show_protocol() {
 	printf '%-12s %s/%s, %s\n' "$label:" "$transport" "$port" "$listener"
 	public_port="$($JQ -er ".${key}.port // empty" "$CLIENT_INFO_PATH" 2>/dev/null || true)"
 	if [ -n "$public_port" ]; then
-		printf '%-12s %s/%s\n' "$label public:" "$transport" "$public_port"
+		port_source=""
+		if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
+			port_source="$(awk -F= -v key="${key}_public_port_source" '$1 == key { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		fi
+		case "$port_source" in
+			assumed) printf '%-12s %s/%s (assumed; verify provider NAT mapping)\n' "$label public:" "$transport" "$public_port" ;;
+			explicit) printf '%-12s %s/%s (explicit)\n' "$label public:" "$transport" "$public_port" ;;
+			*) printf '%-12s %s/%s\n' "$label public:" "$transport" "$public_port" ;;
+		esac
 	fi
 }
 
@@ -469,11 +477,13 @@ show_qr() {
 					"$CLIENT_INFO_PATH" >/dev/null 2>&1; then
 					fail "explicitly enabled AnyTLS share link is missing or unsafe: $path"
 				fi
-				if [ "$protocol" = "all" ]; then
-					printf 'WARNING: AnyTLS QR skipped because its standard URI cannot authenticate a self-signed certificate; use %s/client-anytls-sing-box-outbound.json.\n' "$CONFIG_DIR" >&2
-					continue
-				fi
-				fail "AnyTLS QR is disabled by the authenticated default; use $CONFIG_DIR/client-anytls-sing-box-outbound.json or explicitly redeploy with MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1"
+				printf '\nanytls\n'
+				printf 'enabled: yes\n'
+				printf 'QR: not generated because the standard URI cannot authenticate a self-signed certificate.\n'
+				printf 'authenticated config (sensitive): %s/client-anytls-sing-box-outbound.json\n' "$CONFIG_DIR"
+				printf 'import: merge this JSON object into the sing-box client outbounds list.\n'
+				found=1
+				continue
 			fi
 			fail "share link is missing or unsafe: $path"
 		fi

@@ -87,6 +87,10 @@ esac
 
 "$REPOSITORY/scripts/deploy.sh" > "$test_root/deploy.log" 2>&1
 grep -Fx "runtime=$INITIAL_RUNTIME" /etc/mini-singbox/deployment-info.txt
+grep -Fq 'container/shared-NAT deployment: public forwarding cannot be inferred' "$test_root/deploy.log"
+grep -Fx 'vless_reality_public_port_source=assumed' /etc/mini-singbox/deployment-info.txt
+grep -Fx 'hysteria2_public_port_source=assumed' /etc/mini-singbox/deployment-info.txt
+grep -Fx 'anytls_public_port_source=assumed' /etc/mini-singbox/deployment-info.txt
 /usr/local/bin/mini-singbox check -c /etc/mini-singbox/config.json
 test "$(stat -c '%a' /etc/mini-singbox/config.json)" = 600
 test "$(stat -c '%a' /etc/mini-singbox/tls.key)" = 600

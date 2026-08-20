@@ -330,6 +330,12 @@ PUBLIC_ADDRESS="${MINI_SINGBOX_PUBLIC_ADDRESS:-}"
 PUBLIC_REALITY_PORT="${MINI_SINGBOX_PUBLIC_REALITY_PORT:-}"
 PUBLIC_HY2_PORT="${MINI_SINGBOX_PUBLIC_HY2_PORT:-}"
 PUBLIC_ANYTLS_PORT="${MINI_SINGBOX_PUBLIC_ANYTLS_PORT:-}"
+REALITY_PUBLIC_PORT_SOURCE=assumed
+HY2_PUBLIC_PORT_SOURCE=assumed
+ANYTLS_PUBLIC_PORT_SOURCE=assumed
+[ -n "$PUBLIC_REALITY_PORT" ] && REALITY_PUBLIC_PORT_SOURCE=explicit
+[ -n "$PUBLIC_HY2_PORT" ] && HY2_PUBLIC_PORT_SOURCE=explicit
+[ -n "$PUBLIC_ANYTLS_PORT" ] && ANYTLS_PUBLIC_PORT_SOURCE=explicit
 REFRESH_DELIVERY="${MINI_SINGBOX_REFRESH_DELIVERY:-0}"
 AUTO_DETECT="${MINI_SINGBOX_AUTO_DETECT:-1}"
 AUTO_TUNE="${MINI_SINGBOX_AUTO_TUNE:-1}"
@@ -340,6 +346,21 @@ IP_FAMILY="${MINI_SINGBOX_IP_FAMILY:-auto}"
 REALITY_CANDIDATES="${MINI_SINGBOX_REALITY_CANDIDATES:-www.microsoft.com,www.amazon.com,www.mozilla.org,www.cloudflare.com}"
 NEEDS_GENERATION=0
 AUTO_TUNE_DISABLED_REASON=""
+
+if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
+	if [ "$REALITY_PUBLIC_PORT_SOURCE" = assumed ]; then
+		previous_source="$(awk -F= '$1 == "vless_reality_public_port_source" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		case "$previous_source" in explicit|assumed) REALITY_PUBLIC_PORT_SOURCE="$previous_source" ;; esac
+	fi
+	if [ "$HY2_PUBLIC_PORT_SOURCE" = assumed ]; then
+		previous_source="$(awk -F= '$1 == "hysteria2_public_port_source" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		case "$previous_source" in explicit|assumed) HY2_PUBLIC_PORT_SOURCE="$previous_source" ;; esac
+	fi
+	if [ "$ANYTLS_PUBLIC_PORT_SOURCE" = assumed ]; then
+		previous_source="$(awk -F= '$1 == "anytls_public_port_source" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		case "$previous_source" in explicit|assumed) ANYTLS_PUBLIC_PORT_SOURCE="$previous_source" ;; esac
+	fi
+fi
 
 if [ "$RUNTIME" = external ] || [ "$CONTAINERIZED" -eq 1 ]; then
 	if [ "$RUNTIME" = external ]; then
@@ -833,6 +854,23 @@ if [ "$NEEDS_GENERATION" -eq 1 ] || [ "$REFRESH_DELIVERY" -eq 1 ]; then
 			fail "public ports must be in range 1-65535"
 		fi
 	done
+	if [ "$CONTAINERIZED" -eq 1 ]; then
+		assumed_public_ports=""
+		case ",$PROTOCOLS," in
+			*,reality,*) [ "$REALITY_PUBLIC_PORT_SOURCE" = explicit ] || assumed_public_ports="Reality TCP/$REALITY_PORT" ;;
+		esac
+		case ",$PROTOCOLS," in
+			*,hy2,*) [ "$HY2_PUBLIC_PORT_SOURCE" = explicit ] || assumed_public_ports="${assumed_public_ports:+$assumed_public_ports, }Hysteria2 UDP/$HY2_PORT" ;;
+		esac
+		case ",$PROTOCOLS," in
+			*,anytls,*) [ "$ANYTLS_PUBLIC_PORT_SOURCE" = explicit ] || assumed_public_ports="${assumed_public_ports:+$assumed_public_ports, }AnyTLS TCP/$ANYTLS_PORT" ;;
+		esac
+		if [ -n "$assumed_public_ports" ]; then
+			warn "container/shared-NAT deployment: public forwarding cannot be inferred from the detected IP"
+			warn "assuming the public ports equal the listen ports for: $assumed_public_ports"
+			warn "verify the provider panel mappings or set MINI_SINGBOX_PUBLIC_REALITY_PORT, MINI_SINGBOX_PUBLIC_HY2_PORT, and MINI_SINGBOX_PUBLIC_ANYTLS_PORT"
+		fi
+	fi
 fi
 
 if [ "$NEEDS_GENERATION" -eq 1 ]; then
@@ -1310,6 +1348,7 @@ CURRENT_PUBLIC_ADDRESS="$(jq -r '.public_address // "unknown"' "$CONFIG_DIR/clie
 	if jq -e '.vless_reality' "$CONFIG_DIR/config.json" >/dev/null; then
 		printf 'reality_listen_port=%s/tcp\n' "$(jq -r '.vless_reality.port' "$CONFIG_DIR/config.json")"
 		printf 'reality_public_port=%s/tcp\n' "$(jq -r '.vless_reality.port' "$CONFIG_DIR/client-info.json")"
+		printf 'vless_reality_public_port_source=%s\n' "$REALITY_PUBLIC_PORT_SOURCE"
 		printf 'reality_target=%s:%s\n' \
 			"$(jq -r '.vless_reality.handshake_server' "$CONFIG_DIR/config.json")" \
 			"$(jq -r '.vless_reality.handshake_port' "$CONFIG_DIR/config.json")"
@@ -1317,10 +1356,12 @@ CURRENT_PUBLIC_ADDRESS="$(jq -r '.public_address // "unknown"' "$CONFIG_DIR/clie
 	if jq -e '.hysteria2' "$CONFIG_DIR/config.json" >/dev/null; then
 		printf 'hysteria2_listen_port=%s/udp\n' "$(jq -r '.hysteria2.port' "$CONFIG_DIR/config.json")"
 		printf 'hysteria2_public_port=%s/udp\n' "$(jq -r '.hysteria2.port' "$CONFIG_DIR/client-info.json")"
+		printf 'hysteria2_public_port_source=%s\n' "$HY2_PUBLIC_PORT_SOURCE"
 	fi
 	if jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null; then
 		printf 'anytls_listen_port=%s/tcp\n' "$(jq -r '.anytls.port' "$CONFIG_DIR/config.json")"
 		printf 'anytls_public_port=%s/tcp\n' "$(jq -r '.anytls.port' "$CONFIG_DIR/client-info.json")"
+		printf 'anytls_public_port_source=%s\n' "$ANYTLS_PUBLIC_PORT_SOURCE"
 	fi
 } > "$WORK_DIR/deployment-info.txt"
 install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" \

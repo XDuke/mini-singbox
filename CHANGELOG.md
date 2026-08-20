@@ -19,6 +19,9 @@ Semantic Versioning.
   uninstall.
 - Added Alpine external/OpenRC and rootless Podman CI acceptance gates plus
   multi-architecture GHCR publication and image provenance for formal releases.
+- Added public-port provenance to deployment records and status output so
+  container/shared-NAT installs distinguish explicit mappings from assumed
+  listen-equals-public ports.
 
 ### Changed
 
@@ -34,6 +37,8 @@ Semantic Versioning.
   the target. A narrow verified legacy fallback remains for v1.1.1.
 - Generalized deployment, status, logs, certificate renewal, rollback, update,
   and uninstall transactions across systemd, OpenRC, and external runtimes.
+- AnyTLS delivery commands now report the enabled protocol and authenticated
+  outbound path even when the secure default intentionally omits a generic QR.
 - Formal release bundles now include OpenRC/external/container helpers,
   release metadata, and the immutable OCI digest alongside binary checksums,
   SBOM, and provenance.

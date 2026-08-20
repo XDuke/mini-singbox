@@ -4,6 +4,10 @@
 连接的公网端口因此可能不同。`mini-singbox` 明确区分这两组端口，避免把内网监听
 端口错误写进二维码。
 
+公网 IP 可以自动探测，服务商控制面的端口映射不能。容器首次部署没有显式公网端口时，
+安装器会把它们标记为 `assumed` 并输出警告；`mini-singboxctl status` 也会持续显示
+`verify provider NAT mapping`。这表示服务本地监听已验证，不表示公网转发已经存在。
+
 ## 控制台操作
 
 默认三协议需要以下映射：
@@ -65,7 +69,7 @@ sudo env \
 1. `sudo mini-singboxctl status`：确认配置有效、进程正常，并同时查看本地监听端口和
    客户端公网端口。
 2. `sudo cat /etc/mini-singbox/deployment-info.txt`：确认每个协议的
-   `*_listen_port` 与 `*_public_port` 对应正确。
+   `*_listen_port` 与 `*_public_port` 对应正确，并确认 `*_public_port_source=explicit`。
 3. 从实例外部探测 Reality/AnyTLS 的两个 TCP 公网端口。
 4. 使用真实客户端导入 Reality、Hysteria2 二维码以及 AnyTLS 认证出站配置并分别建立
    连接；Hysteria2 必须用真实 QUIC/UDP 客户端验证，不能只依赖 TCP 端口测试。
