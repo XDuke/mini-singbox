@@ -6,15 +6,25 @@ helper. They deliberately have different ownership boundaries.
 | Mode | Intended environment | Lifecycle owner | Host TCP tuning |
 |---|---|---|---|
 | `systemd` | Debian/Ubuntu host or systemd VM | systemd | supported |
-| `openrc` | Alpine Linux host | OpenRC `supervise-daemon` | supported |
+| `openrc` | Native Alpine Linux host | OpenRC `supervise-daemon` | supported |
+| `openrc-container` profile | Alpine container with OpenRC as PID 1 | OpenRC `supervise-daemon` | blocked |
 | `external` | provider container with an existing supervisor | provider supervisor | blocked |
 | OCI | rootless Podman or Docker | container engine/helper | blocked |
 
 `MINI_SINGBOX_RUNTIME=auto` is the default. A running systemd host is selected
-first. A detected container is external even when OpenRC tools happen to be
-installed inside it. A real Alpine host with `/run/openrc` uses OpenRC. An
-existing installation records its selected runtime and refuses an implicit
-cross-runtime upgrade.
+first. OpenRC is selected only when its commands and runtime directory exist,
+PID 1 is `init`/`openrc-init`, and `rc-status` succeeds. A container with merely
+installed OpenRC tools therefore remains external, while a full Alpine/OpenRC
+container receives the `openrc-container` profile and a real OpenRC service.
+Other provider containers remain external.
+
+Existing installations normally refuse implicit cross-runtime upgrades. The
+single automatic exception repairs older detection: an inactive external
+deployment may migrate transactionally to `openrc-container` when the active
+PID 1 service manager is provably OpenRC. An active external process still has
+to be stopped first. On success the obsolete external runner is removed; on
+failure the old binary, configuration, deployment record and runner are
+restored.
 
 ## Native Alpine host
 
@@ -54,6 +64,9 @@ OpenRC does not provide the systemd `MemoryMax` or `TasksMax` cgroup controls.
 `GOMEMLIMIT=48MiB`, `GOMAXPROCS=1`, and `GOGC=70` remain active, but they are
 runtime settings rather than a hard container memory ceiling. Set host/container
 limits in the provider control plane when a hard 128 MiB limit is required.
+In an `openrc-container` profile, deployment-time tuning and
+`mini-singboxctl tune apply` are blocked because the surrounding container
+engine owns the kernel and `/proc/sys` may be read-only.
 
 ## Provider container with an external supervisor
 
@@ -78,8 +91,9 @@ it after the command succeeds. `mini-singboxctl logs` is unavailable because the
 outer platform owns logs.
 
 Both deployment-time automatic TCP tuning and `mini-singboxctl tune apply` are
-disabled in external mode. Containers share the host kernel, so an inner process
-must not claim ownership of host sysctls.
+disabled in every detected container profile, including external,
+`openrc-container`, and container-compatible systemd. Containers share the host
+kernel, so an inner process must not claim ownership of host sysctls.
 
 ## Rootless Podman or Docker
 
@@ -145,7 +159,8 @@ credentials; the helper cannot recover them.
 CI builds the exact candidate static binary and then tests it in:
 
 - Alpine 3.23 and 3.24 external-supervisor containers;
-- a privileged Alpine 3.24 fixture booted with OpenRC;
+- a privileged Alpine 3.24 fixture booted with OpenRC, including automatic
+  container-profile detection and inactive external-to-OpenRC migration;
 - rootless Podman with the read-only/capability/PID/memory policies;
 - Docker scratch-container generation, configuration check, idle startup and
   clean SIGTERM.

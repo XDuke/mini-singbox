@@ -80,11 +80,16 @@ then exercises either:
 
 - Alpine external-supervisor start/status, blocked container tuning, non-root
   identity, transactional certificate renewal, restart and purge; or
-- a booted OpenRC service, default-runlevel enablement, restart, status, logs
-  and purge.
+- a booted OpenRC service with automatic container-profile detection,
+  default-runlevel enablement, blocked host tuning, restart, status, logs and
+  purge; and
+- transactional migration from an inactive legacy external deployment to the
+  detected containerized OpenRC service, including retirement of the obsolete
+  foreground runner.
 
 CI runs external mode on Alpine 3.23 and 3.24 and OpenRC mode in a privileged
-Alpine 3.24 fixture. Do not run the harness on a host containing a real
+Alpine 3.24 fixture, covering both a clean automatic install and migration. Do
+not run the harness on a host containing a real
 `/etc/mini-singbox`; it intentionally uninstalls and purges the fixture.
 
 The `rootless-podman` CI job separately builds the scratch image, imports it into

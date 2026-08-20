@@ -47,22 +47,34 @@ running_in_container() {
 		grep -Eqi '(docker|podman|lxc|openvz|containerd)' /proc/1/cgroup /proc/self/cgroup 2>/dev/null
 }
 
+openrc_is_running() {
+	command_exists rc-service || return 1
+	command_exists rc-update || return 1
+	command_exists rc-status || return 1
+	[ -d /run/openrc ] || return 1
+	[ -r /proc/1/comm ] || return 1
+	case "$(cat /proc/1/comm 2>/dev/null)" in
+		init|openrc-init) ;;
+		*) return 1 ;;
+	esac
+	rc-status >/dev/null 2>&1
+}
+
 detect_runtime() {
-	requested="${MINI_SINGBOX_RUNTIME:-auto}"
-	case "$requested" in
+	case "$RUNTIME_REQUESTED" in
 		auto|systemd|openrc|external) ;;
 		*) fail "MINI_SINGBOX_RUNTIME must be auto, systemd, openrc, or external" ;;
 	esac
-	if [ "$requested" != auto ]; then
-		printf '%s\n' "$requested"
+	if [ "$RUNTIME_REQUESTED" != auto ]; then
+		printf '%s\n' "$RUNTIME_REQUESTED"
 		return 0
 	fi
 	if command_exists systemctl && [ -d /run/systemd/system ]; then
 		printf 'systemd\n'
+	elif openrc_is_running; then
+		printf 'openrc\n'
 	elif running_in_container; then
 		printf 'external\n'
-	elif command_exists rc-service && command_exists rc-update && [ -d /run/openrc ]; then
-		printf 'openrc\n'
 	else
 		fail "no supported runtime detected; set MINI_SINGBOX_RUNTIME=external when another supervisor owns the process"
 	fi
@@ -202,16 +214,19 @@ prune_managed_backups() {
 
 [ "$(id -u)" -eq 0 ] || fail "run as root (use sudo env ... ./scripts/deploy.sh)"
 [ "$(uname -s)" = "Linux" ] || fail "this deployer supports Linux only"
+RUNTIME_REQUESTED="${MINI_SINGBOX_RUNTIME:-auto}"
 RUNTIME="$(detect_runtime)"
+CONTAINERIZED=0
+if running_in_container; then
+	CONTAINERIZED=1
+fi
 case "$RUNTIME" in
 	systemd)
 		command_exists systemctl || fail "systemd runtime was selected but systemctl is unavailable"
 		[ -d /run/systemd/system ] || fail "systemd runtime was selected but is not running"
 		;;
 	openrc)
-		command_exists rc-service || fail "OpenRC runtime was selected but rc-service is unavailable"
-		command_exists rc-update || fail "OpenRC runtime was selected but rc-update is unavailable"
-		[ -d /run/openrc ] || fail "OpenRC runtime was selected but OpenRC is not running"
+		openrc_is_running || fail "OpenRC runtime was selected but OpenRC is not the active PID 1 service manager"
 		;;
 	external) running_in_container || warn "external runtime selected outside a detected container; another supervisor must own the process" ;;
 esac
@@ -286,7 +301,15 @@ case "$RUNTIME" in
 			warn "container virtualization detected; using the container-compatible systemd sandbox"
 		fi
 		;;
-	openrc) UNIT_SOURCE="$OPENRC_UNIT_SOURCE"; UNIT_PATH="$OPENRC_UNIT_PATH"; UNIT_PROFILE="openrc" ;;
+	openrc)
+		UNIT_SOURCE="$OPENRC_UNIT_SOURCE"
+		UNIT_PATH="$OPENRC_UNIT_PATH"
+		UNIT_PROFILE="openrc"
+		if [ "$CONTAINERIZED" -eq 1 ]; then
+			UNIT_PROFILE="openrc-container"
+			warn "containerized OpenRC detected; OpenRC will own the service while host TCP tuning stays disabled"
+		fi
+		;;
 	external) UNIT_SOURCE="$EXTERNAL_RUN_SOURCE"; UNIT_PATH="$EXTERNAL_RUN_PATH"; UNIT_PROFILE="external-supervisor" ;;
 esac
 for required_source in "$CONTROL_SOURCE" "$CONTAINER_CONTROL_SOURCE" "$UPDATE_SOURCE" "$UNINSTALL_SOURCE" "$UNIT_SOURCE" "$EXTERNAL_RUN_SOURCE"; do
@@ -316,10 +339,16 @@ BACKUP_KEEP="${MINI_SINGBOX_BACKUP_KEEP:-5}"
 IP_FAMILY="${MINI_SINGBOX_IP_FAMILY:-auto}"
 REALITY_CANDIDATES="${MINI_SINGBOX_REALITY_CANDIDATES:-www.microsoft.com,www.amazon.com,www.mozilla.org,www.cloudflare.com}"
 NEEDS_GENERATION=0
+AUTO_TUNE_DISABLED_REASON=""
 
-if [ "$RUNTIME" = external ]; then
+if [ "$RUNTIME" = external ] || [ "$CONTAINERIZED" -eq 1 ]; then
+	if [ "$RUNTIME" = external ]; then
+		AUTO_TUNE_DISABLED_REASON="the external runtime does not own the host kernel"
+	else
+		AUTO_TUNE_DISABLED_REASON="the $UNIT_PROFILE runtime shares its host kernel"
+	fi
 	if [ "$AUTO_TUNE" = "1" ] && [ "${MINI_SINGBOX_AUTO_TUNE+x}" = "x" ]; then
-		warn "external runtime cannot safely own host TCP sysctls; MINI_SINGBOX_AUTO_TUNE=1 was ignored"
+		warn "$AUTO_TUNE_DISABLED_REASON; MINI_SINGBOX_AUTO_TUNE=1 was ignored"
 	fi
 	AUTO_TUNE=0
 fi
@@ -360,13 +389,23 @@ fi
 if [ ! -f "$CONFIG_DIR/config.json" ] || [ "$REGENERATE" = "1" ]; then
 	NEEDS_GENERATION=1
 fi
+MIGRATION_FROM_RUNTIME=""
 if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
 	EXISTING_RUNTIME="$(awk -F= '$1 == "runtime" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
 	if [ -z "$EXISTING_RUNTIME" ] && grep -q '^systemd_profile=' "$CONFIG_DIR/deployment-info.txt"; then
 		EXISTING_RUNTIME=systemd
 	fi
 	if [ -n "$EXISTING_RUNTIME" ] && [ "$EXISTING_RUNTIME" != "$RUNTIME" ]; then
-		fail "existing installation uses $EXISTING_RUNTIME; refusing an implicit runtime migration to $RUNTIME"
+		if [ "$EXISTING_RUNTIME" = external ] && [ "$RUNTIME" = openrc ] && \
+			[ "$CONTAINERIZED" -eq 1 ] && openrc_is_running; then
+			if external_pid >/dev/null; then
+				fail "the existing external process is active; stop its supervisor before migrating to OpenRC"
+			fi
+			MIGRATION_FROM_RUNTIME=external
+			warn "migrating an inactive external deployment to the active containerized OpenRC service manager"
+		else
+			fail "existing installation uses $EXISTING_RUNTIME; refusing an implicit runtime migration to $RUNTIME"
+		fi
 	fi
 fi
 
@@ -858,11 +897,13 @@ HAD_CONTAINER_CONTROL=0
 HAD_UPDATE=0
 HAD_UNINSTALL=0
 HAD_UNIT=0
+HAD_EXTERNAL_RUN=0
 HAD_CONFIG=0
 WAS_ACTIVE=0
 WAS_ENABLED=0
 DELIVERY_REPLACED=0
 DEPLOYMENT_INFO_REWRITTEN=0
+EXTERNAL_RUN_REMOVED=0
 BACKUP_DIR=""
 
 rollback() {
@@ -893,6 +934,13 @@ rollback() {
 		install -m 0755 "$BACKUP_DIR/mini-singbox-uninstall" "$UNINSTALL_PATH"
 	else
 		rm -f "$UNINSTALL_PATH"
+	fi
+	if [ "$EXTERNAL_RUN_REMOVED" -eq 1 ]; then
+		if [ "$HAD_EXTERNAL_RUN" -eq 1 ]; then
+			install -m 0755 "$BACKUP_DIR/mini-singbox-run" "$EXTERNAL_RUN_PATH"
+		else
+			rm -f "$EXTERNAL_RUN_PATH"
+		fi
 	fi
 
 	if [ "$HAD_UNIT" -eq 1 ]; then
@@ -1026,7 +1074,7 @@ if [ "$SIGNED_RELEASE" -eq 1 ] || [ "$VERIFY_BUNDLE_FILES" -eq 1 ]; then
 	case "$UNIT_PROFILE" in
 		full) unit_manifest_name=packaging/systemd/mini-singbox.service ;;
 		container-compatible) unit_manifest_name=packaging/systemd/mini-singbox-container.service ;;
-		openrc) unit_manifest_name="$openrc_manifest_name" ;;
+		openrc|openrc-container) unit_manifest_name="$openrc_manifest_name" ;;
 		external-supervisor) unit_manifest_name="$external_manifest_name" ;;
 		*) fail "internal runtime profile error: $UNIT_PROFILE" ;;
 	esac
@@ -1173,6 +1221,10 @@ if [ -f "$UNINSTALL_PATH" ]; then
 	HAD_UNINSTALL=1
 	cp -a "$UNINSTALL_PATH" "$BACKUP_DIR/mini-singbox-uninstall"
 fi
+if [ "$MIGRATION_FROM_RUNTIME" = external ] && [ -f "$EXTERNAL_RUN_PATH" ]; then
+	HAD_EXTERNAL_RUN=1
+	cp -a "$EXTERNAL_RUN_PATH" "$BACKUP_DIR/mini-singbox-run"
+fi
 if [ -f "$UNIT_PATH" ]; then
 	HAD_UNIT=1
 	cp -a "$UNIT_PATH" "$BACKUP_DIR/runtime-unit"
@@ -1253,6 +1305,7 @@ CURRENT_PUBLIC_ADDRESS="$(jq -r '.public_address // "unknown"' "$CONFIG_DIR/clie
 	printf 'protocols=%s\n' "$CURRENT_PROTOCOLS"
 	printf 'runtime=%s\n' "$RUNTIME"
 	printf 'runtime_profile=%s\n' "$UNIT_PROFILE"
+	printf 'containerized=%s\n' "$CONTAINERIZED"
 	printf 'public_address=%s\n' "$CURRENT_PUBLIC_ADDRESS"
 	if jq -e '.vless_reality' "$CONFIG_DIR/config.json" >/dev/null; then
 		printf 'reality_listen_port=%s/tcp\n' "$(jq -r '.vless_reality.port' "$CONFIG_DIR/config.json")"
@@ -1403,11 +1456,21 @@ if [ "$AUTO_TUNE" -eq 1 ]; then
 		warn "automatic TCP tuning was skipped or recovered after an error; inspect with: sudo mini-singboxctl tune status"
 	fi
 else
-	log "Automatic TCP tuning disabled by MINI_SINGBOX_AUTO_TUNE=0"
+	if [ -n "$AUTO_TUNE_DISABLED_REASON" ]; then
+		log "Automatic TCP tuning disabled: $AUTO_TUNE_DISABLED_REASON"
+	else
+		log "Automatic TCP tuning disabled by MINI_SINGBOX_AUTO_TUNE=0"
+	fi
 fi
 
 if ! prune_managed_backups; then
 	warn "backup retention encountered an error; existing backups were left in place"
+fi
+
+if [ "$MIGRATION_FROM_RUNTIME" = external ]; then
+	EXTERNAL_RUN_REMOVED=1
+	rm -f "$EXTERNAL_RUN_PATH"
+	log "Retired the external runner after successful migration to OpenRC"
 fi
 
 DEPLOYMENT_SUCCEEDED=1

@@ -19,10 +19,10 @@ OCI 容器运行链。正式标签会等 Alpine/OpenRC 与真实客户端验收�
   版本元数据和每个部署文件，再执行安装；`v1.1.1` 仍保留兼容回退路径；
 - 原生支持 Debian/Ubuntu `systemd` 与 Alpine `OpenRC`，两者都有非 root 用户、开机
   自启、启动稳定性、进程身份、配置和监听端口检查；
-- 在服务商容器内自动使用 `external` 模式，只准备二进制、配置和非 root 前台入口，
-  由外层 supervisor 管理生命周期，不虚假宣称容器内自启；
-- external/OCI 内强制禁止自动写宿主 TCP sysctl；TCP 调优只能由真正拥有宿主内核的
-  systemd/OpenRC 主机执行；
+- 完整运行 OpenRC 的 Alpine 容器使用 `openrc-container` profile，仍由 OpenRC 自启；
+  没有真实 init 的服务商容器才使用 `external` 前台入口；
+- 所有容器 profile 与 OCI 内强制禁止自动写宿主 TCP sysctl；TCP 调优只能由真正拥有
+  宿主内核的原生 systemd/OpenRC 主机执行；
 - 新增 rootless Podman/Docker 管理工具，提供 `init/up/status/logs/check/upgrade/rollback`、
   二维码、事务续证和保留配置卸载；默认只读根文件系统、空 capabilities、128 MiB 与
   64 PID 上限；
@@ -276,14 +276,16 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 
 ## 运行模式与快捷命令
 
-安装器自动选择运行模式：真实 Debian/Ubuntu 主机使用 systemd；真实 Alpine 主机使用
-OpenRC；检测到服务商 Docker/Podman/LXC 容器时使用 external。已经部署过的目录会记录
-模式，升级时不会隐式跨模式迁移，避免在切换 init system 时丢失自启或留下双进程。
+安装器自动选择运行模式：真实 Debian/Ubuntu 主机使用 systemd；原生 Alpine 与 PID 1
+确实由 OpenRC 管理的 Alpine 容器使用 OpenRC；没有真实 init 的服务商容器使用
+external。OpenRC 容器记录 `openrc-container` profile，由 OpenRC 管理服务，但禁止写
+宿主 TCP sysctl。通常不允许隐式跨模式迁移；旧版误判的 inactive external 安装可在
+确认 OpenRC 为 PID 1 后事务迁移，若 external 进程仍运行则拒绝迁移。
 
 | 环境 | 启动与自启所有者 | 常用命令 |
 |---|---|---|
 | systemd | `mini-singbox.service` | `sudo systemctl status/restart mini-singbox` |
-| Alpine OpenRC | `/etc/init.d/mini-singbox` | `sudo rc-service mini-singbox status/restart` |
+| Alpine OpenRC（原生或完整 init 容器） | `/etc/init.d/mini-singbox` | `sudo rc-service mini-singbox status/restart` |
 | 服务商容器 | 外层 supervisor | 前台命令 `/usr/local/bin/mini-singbox-run` |
 | rootless Podman/Docker | `mini-singbox-containerctl` | `init/up/status/logs/upgrade/rollback/down` |
 
@@ -451,7 +453,8 @@ TasksMax=64
 
 普通 systemd VM 使用完整沙箱；受限 systemd LXC 会使用 container-compatible unit，保留
 非 root、空 capabilities、`NoNewPrivileges`、内存和任务上限，但依赖外层容器提供挂载
-命名空间与 seccomp 边界。两种 profile 会写入 `deployment-info.txt`，不宣称保护等价。
+命名空间与 seccomp 边界。完整 OpenRC 容器使用 `openrc-container` profile。所有 profile
+都会写入 `deployment-info.txt`；容器 profile 不执行宿主 TCP 调优，也不宣称保护等价。
 
 2026-08-09 的 1 vCPU/128 MiB 共享 NAT 实机测试基于 `v1.0.0`（sing-box
 `v1.13.16`、Go `1.26.5`）；三协议同时运行时观测到：

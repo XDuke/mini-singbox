@@ -22,6 +22,12 @@ Semantic Versioning.
 
 ### Changed
 
+- OpenRC auto-detection now distinguishes installed tooling from an active PID
+  1 service manager. Full Alpine/OpenRC containers use an `openrc-container`
+  profile, while provider containers without a real init remain external.
+- Inactive deployments previously misclassified as external migrate
+  transactionally to containerized OpenRC; active external processes and all
+  other implicit cross-runtime changes remain blocked.
 - Reworked bootstrap into an asset-first path for v1.2.0 and newer: stable
   releases verify the independently pinned minisign key, signed checksum
   manifest, release metadata, and each deployment asset without cloning Git on
@@ -34,8 +40,9 @@ Semantic Versioning.
 
 ### Security
 
-- Container/external deployments never apply host TCP sysctls; direct and
-  control-tool tuning paths reject known container virtualization.
+- Container/external deployments never apply host TCP sysctls, including
+  OpenRC and systemd container profiles; direct and control-tool tuning paths
+  reject known container virtualization.
 - OpenRC uses a root-owned PID file, `no_new_privs`, restrictive umask, and an
   unprivileged service user. OCI runtime defaults remain read-only, capability
   free, `no-new-privileges`, 64-PID and 128-MiB bounded.

@@ -10,8 +10,11 @@ set -eu
 	exit 1
 }
 
-RUNTIME="${1:-}"
-case "$RUNTIME" in external|openrc) ;; *) echo 'usage: alpine-runtime.sh external|openrc' >&2; exit 2 ;; esac
+MODE="${1:-}"
+case "$MODE" in
+	external|openrc-auto|openrc-migration) ;;
+	*) echo 'usage: alpine-runtime.sh external|openrc-auto|openrc-migration' >&2; exit 2 ;;
+esac
 
 REPOSITORY="${MINI_SINGBOX_TEST_REPOSITORY:-/workspace}"
 BINARY="${MINI_SINGBOX_TEST_BINARY:-/artifacts/mini-singbox-linux-amd64}"
@@ -54,10 +57,8 @@ install -m 0755 "$REPOSITORY/tests/fake-release-curl.sh" "$test_root/bin/curl"
 export PATH="$test_root/bin:$PATH"
 export MINI_SINGBOX_TEST_BINARY="$BINARY"
 export MINI_SINGBOX_TEST_SUMS="$sums"
-export MINI_SINGBOX_RUNTIME="$RUNTIME"
 export MINI_SINGBOX_RELEASE_TAG="$version"
 export MINI_SINGBOX_AUTO_DETECT=0
-export MINI_SINGBOX_AUTO_TUNE=0
 export MINI_SINGBOX_PUBLIC_ADDRESS=203.0.113.10
 export MINI_SINGBOX_REALITY_SERVER_NAME=www.example.com
 export MINI_SINGBOX_REALITY_HANDSHAKE=www.example.com:443
@@ -66,24 +67,63 @@ export MINI_SINGBOX_REALITY_PORT=31001
 export MINI_SINGBOX_HY2_PORT=31002
 export MINI_SINGBOX_ANYTLS_PORT=31003
 
-"$REPOSITORY/scripts/deploy.sh" > "$test_root/deploy.log"
-grep -Fx "runtime=$RUNTIME" /etc/mini-singbox/deployment-info.txt
+case "$MODE" in
+	external)
+		export MINI_SINGBOX_RUNTIME=external
+		export MINI_SINGBOX_AUTO_TUNE=0
+		INITIAL_RUNTIME=external
+		;;
+	openrc-auto)
+		unset MINI_SINGBOX_RUNTIME
+		export MINI_SINGBOX_AUTO_TUNE=1
+		INITIAL_RUNTIME=openrc
+		;;
+	openrc-migration)
+		export MINI_SINGBOX_RUNTIME=external
+		export MINI_SINGBOX_AUTO_TUNE=0
+		INITIAL_RUNTIME=external
+		;;
+esac
+
+"$REPOSITORY/scripts/deploy.sh" > "$test_root/deploy.log" 2>&1
+grep -Fx "runtime=$INITIAL_RUNTIME" /etc/mini-singbox/deployment-info.txt
 /usr/local/bin/mini-singbox check -c /etc/mini-singbox/config.json
 test "$(stat -c '%a' /etc/mini-singbox/config.json)" = 600
 test "$(stat -c '%a' /etc/mini-singbox/tls.key)" = 600
 
-if [ "$RUNTIME" = openrc ]; then
+OPENRC_DEPLOY_LOG="$test_root/deploy.log"
+if [ "$MODE" = openrc-migration ]; then
+	test -x /usr/local/bin/mini-singbox-run
+	test ! -e /etc/init.d/mini-singbox
+	unset MINI_SINGBOX_RUNTIME
+	export MINI_SINGBOX_AUTO_TUNE=1
+	"$REPOSITORY/scripts/deploy.sh" > "$test_root/migration.log" 2>&1
+	OPENRC_DEPLOY_LOG="$test_root/migration.log"
+	grep -Fq 'migrating an inactive external deployment to the active containerized OpenRC service manager' "$OPENRC_DEPLOY_LOG"
+fi
+
+if [ "$MODE" != external ]; then
+	grep -Fx 'runtime=openrc' /etc/mini-singbox/deployment-info.txt
+	grep -Fx 'runtime_profile=openrc-container' /etc/mini-singbox/deployment-info.txt
+	grep -Fx 'containerized=1' /etc/mini-singbox/deployment-info.txt
+	grep -Fq 'Automatic TCP tuning disabled: the openrc-container runtime shares its host kernel' "$OPENRC_DEPLOY_LOG"
 	rc-service mini-singbox status
 	rc-update show default | grep -F mini-singbox
 	mini-singboxctl status > "$test_root/status.log"
 	grep -Fq 'service:      active (openrc)' "$test_root/status.log"
+	test ! -e /usr/local/bin/mini-singbox-run
+	test ! -f /var/lib/mini-singbox/tune/active.json
+	if mini-singboxctl tune apply >/dev/null 2>&1; then
+		echo 'containerized OpenRC unexpectedly allowed TCP tuning' >&2
+		exit 1
+	fi
 	rc-service mini-singbox restart
 	sleep 2
 	rc-service mini-singbox status
 	mini-singboxctl logs 10 >/dev/null
 	PURGE=1 PURGE_BACKUPS=1 mini-singbox-uninstall >/dev/null
 	test ! -e /etc/init.d/mini-singbox
-	printf 'Alpine %s OpenRC deployment test passed\n' "$(cat /etc/alpine-release)"
+	printf 'Alpine %s %s deployment test passed\n' "$(cat /etc/alpine-release)" "$MODE"
 	exit 0
 fi
 

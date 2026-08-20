@@ -260,8 +260,10 @@ jobs:
           done
           docker logs mini-singbox-openrc
           exit 1
-      - name: Alpine OpenRC acceptance
-        run: docker exec mini-singbox-openrc /workspace/tests/alpine-runtime.sh openrc
+      - name: Alpine OpenRC auto-detection acceptance
+        run: docker exec mini-singbox-openrc /workspace/tests/alpine-runtime.sh openrc-auto
+      - name: Inactive external to containerized OpenRC migration acceptance
+        run: docker exec mini-singbox-openrc /workspace/tests/alpine-runtime.sh openrc-migration
       - name: OpenRC fixture logs
         if: always()
         run: |

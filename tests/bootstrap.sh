@@ -60,6 +60,9 @@ grep -Fq 'mini-singbox-run minisign.pub' bootstrap.sh
 grep -Fq 'v1.0.0|v1.1.0|v1.1.1' bootstrap.sh
 grep -Fq 'runtime=' scripts/deploy.sh
 grep -Fq 'openrc' scripts/deploy.sh
+grep -Fq 'openrc-container' scripts/deploy.sh
+grep -Fq 'migrating an inactive external deployment' scripts/deploy.sh
+grep -Fq 'tuning_is_host_owned' scripts/mini-singboxctl
 grep -Fq 'external' scripts/deploy.sh
 grep -Fq 'develop/v1.2.0-alpine' .github/workflows/candidate-binaries.yml
 for asset in \

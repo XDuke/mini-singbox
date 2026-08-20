@@ -77,6 +77,11 @@ command_available() {
 	esac
 }
 
+running_in_container() {
+	[ -f /.dockerenv ] || [ -f /run/.containerenv ] || \
+		grep -Eqi '(docker|podman|lxc|openvz|containerd)' /proc/1/cgroup /proc/self/cgroup 2>/dev/null
+}
+
 require_command() {
 	command_available "$1" || fail "required command not found: $1"
 }
@@ -115,6 +120,18 @@ detect_runtime() {
 	else
 		printf 'unknown\n'
 	fi
+}
+
+tuning_is_host_owned() {
+	[ "$(detect_runtime)" != external ] || return 1
+	if [ -f "$CONFIG_DIR/deployment-info.txt" ] && [ ! -L "$CONFIG_DIR/deployment-info.txt" ]; then
+		profile="$(awk -F= '$1 == "runtime_profile" { print $2 }' "$CONFIG_DIR/deployment-info.txt")"
+		case "$profile" in
+			container-compatible|openrc-container|external-supervisor) return 1 ;;
+		esac
+	fi
+	running_in_container && return 1
+	return 0
 }
 
 external_pid() {
@@ -524,7 +541,7 @@ case "$command" in
 		[ "$#" -ge 2 ] || fail "tune requires a subcommand"
 		require_installation
 		shift
-		if [ "$(detect_runtime)" = external ] && [ "$1" = apply ]; then
+		if [ "$1" = apply ] && ! tuning_is_host_owned; then
 			fail "tune apply is disabled for external/container runtime; tune the host outside the container"
 		fi
 		exec "$BINARY" tune "$@" -c "$CONFIG_PATH" --state-dir "$TUNE_STATE_DIR"
