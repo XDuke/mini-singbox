@@ -121,12 +121,37 @@ if [ "$MODE" != external ]; then
 		echo 'containerized OpenRC unexpectedly allowed TCP tuning' >&2
 		exit 1
 	fi
+	OPENRC_LOG_PATH=/var/log/mini-singbox/service.log
+	test -f "$OPENRC_LOG_PATH"
+	test ! -L "$OPENRC_LOG_PATH"
+	test "$(stat -c '%a' "$OPENRC_LOG_PATH")" = 600
+	test "$(stat -c '%U:%G' "$OPENRC_LOG_PATH")" = root:root
+	mini-singboxctl logs 50 > "$test_root/service-logs.txt"
+	grep -aFq 'sing-box started' "$test_root/service-logs.txt"
+	if [ "$MODE" = openrc-auto ]; then
+		dd if=/dev/zero bs=1100000 count=1 >> "$OPENRC_LOG_PATH" 2>/dev/null
+	fi
 	rc-service mini-singbox restart
 	sleep 2
 	rc-service mini-singbox status
-	mini-singboxctl logs 10 >/dev/null
+	mini-singboxctl logs 50 > "$test_root/service-logs-after-restart.txt"
+	grep -aFq 'sing-box started' "$test_root/service-logs-after-restart.txt"
+	if [ "$MODE" = openrc-auto ]; then
+		test "$(stat -c '%s' "$OPENRC_LOG_PATH")" -lt 600000
+		mv /var/log/mini-singbox "$test_root/openrc-log-real"
+		ln -s "$test_root/openrc-log-real" /var/log/mini-singbox
+		if PURGE=1 mini-singbox-uninstall >/dev/null 2>&1; then
+			echo 'purge followed an unsafe OpenRC log-directory symbolic link' >&2
+			exit 1
+		fi
+		test -x /usr/local/bin/mini-singbox
+		test -e /etc/init.d/mini-singbox
+		rm /var/log/mini-singbox
+		mv "$test_root/openrc-log-real" /var/log/mini-singbox
+	fi
 	PURGE=1 PURGE_BACKUPS=1 mini-singbox-uninstall >/dev/null
 	test ! -e /etc/init.d/mini-singbox
+	test ! -e /var/log/mini-singbox
 	printf 'Alpine %s %s deployment test passed\n' "$(cat /etc/alpine-release)" "$MODE"
 	exit 0
 fi

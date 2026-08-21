@@ -63,6 +63,12 @@ grep -Fq 'openrc' scripts/deploy.sh
 grep -Fq 'openrc-container' scripts/deploy.sh
 grep -Fq 'migrating an inactive external deployment' scripts/deploy.sh
 grep -Fq 'tuning_is_host_owned' scripts/mini-singboxctl
+grep -Fq 'output_log="/var/log/mini-singbox/service.log"' packaging/openrc/mini-singbox
+grep -Fq 'MINI_SINGBOX_OPENRC_LOG_PATH' scripts/mini-singboxctl
+if grep -Fq 'output_logger=' packaging/openrc/mini-singbox; then
+	echo 'OpenRC service must not depend on an unverified syslog socket' >&2
+	exit 1
+fi
 grep -Fq 'external' scripts/deploy.sh
 grep -Fq 'develop/v1.2.0-alpine' .github/workflows/candidate-binaries.yml
 for asset in \

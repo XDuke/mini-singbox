@@ -13,6 +13,8 @@ EXTERNAL_RUN_PATH="/usr/local/bin/mini-singbox-run"
 CONFIG_DIR="/etc/mini-singbox"
 SYSTEMD_UNIT_PATH="/etc/systemd/system/mini-singbox.service"
 OPENRC_UNIT_PATH="/etc/init.d/mini-singbox"
+OPENRC_LOG_DIR="/var/log/mini-singbox"
+OPENRC_LOG_PATH="$OPENRC_LOG_DIR/service.log"
 EXTERNAL_PID_FILE="/run/mini-singbox/mini-singbox.pid"
 BACKUP_ROOT="/var/backups/mini-singbox"
 REPOSITORY="XDuke/mini-singbox"
@@ -1294,6 +1296,20 @@ case "$RUNTIME" in
 	systemd) install -m 0644 "$UNIT_SOURCE" "$UNIT_PATH" ;;
 	openrc|external) install -m 0755 "$UNIT_SOURCE" "$UNIT_PATH" ;;
 esac
+if [ "$RUNTIME" = openrc ]; then
+	if [ -L "$OPENRC_LOG_DIR" ] || { [ -e "$OPENRC_LOG_DIR" ] && [ ! -d "$OPENRC_LOG_DIR" ]; }; then
+		fail "OpenRC log directory is missing or unsafe: $OPENRC_LOG_DIR"
+	fi
+	install -d -m 0700 -o root -g root "$OPENRC_LOG_DIR"
+	if [ -e "$OPENRC_LOG_PATH" ]; then
+		[ -f "$OPENRC_LOG_PATH" ] && [ ! -L "$OPENRC_LOG_PATH" ] || \
+			fail "OpenRC log file is unsafe: $OPENRC_LOG_PATH"
+		chown root:root "$OPENRC_LOG_PATH"
+		chmod 0600 "$OPENRC_LOG_PATH"
+	else
+		install -m 0600 -o root -g root /dev/null "$OPENRC_LOG_PATH"
+	fi
+fi
 if [ "$RUNTIME" = external ]; then
 	install -d -m 0750 -o "$SERVICE_USER" -g "$SERVICE_USER" /run/mini-singbox
 fi

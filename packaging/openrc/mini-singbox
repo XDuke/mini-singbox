@@ -12,8 +12,8 @@ pidfile="/run/mini-singbox.pid"
 respawn_delay=2
 respawn_max=5
 respawn_period=30
-output_logger="logger -t mini-singbox"
-error_logger="logger -t mini-singbox"
+output_log="/var/log/mini-singbox/service.log"
+error_log="/var/log/mini-singbox/service.log"
 no_new_privs=yes
 retry="TERM/10/KILL/5"
 umask=0077
@@ -27,6 +27,26 @@ depend() {
 	after firewall
 }
 
+rotate_service_log() {
+	log_path="/var/log/mini-singbox/service.log"
+	[ -e "$log_path" ] || return 0
+	[ -f "$log_path" ] && [ ! -L "$log_path" ] || return 1
+	log_size="$(wc -c < "$log_path")" || return 1
+	[ "$log_size" -le 1048576 ] && return 0
+	log_tmp="${log_path}.tmp.$$"
+	rm -f -- "$log_tmp"
+	if ! tail -c 524288 "$log_path" > "$log_tmp"; then
+		rm -f -- "$log_tmp"
+		return 1
+	fi
+	if ! chmod 0600 "$log_tmp" || ! chown root:root "$log_tmp" || \
+		! mv -f -- "$log_tmp" "$log_path"; then
+		rm -f -- "$log_tmp"
+		return 1
+	fi
+}
+
 start_pre() {
 	/usr/local/bin/mini-singbox check -c /etc/mini-singbox/config.json
+	rotate_service_log
 }

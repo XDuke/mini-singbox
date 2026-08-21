@@ -51,6 +51,7 @@ grep -Fq 'pinSHA256=' "$CONFIG_DIRECTORY/share-hysteria2.txt"
 grep -Fq '@[2001:db8::10]:36279' "$CONFIG_DIRECTORY/share-anytls.txt"
 
 FAKE_SYSTEMCTL="$WORK_DIRECTORY/systemctl"
+FAKE_RC_SERVICE="$WORK_DIRECTORY/rc-service"
 FAKE_SS="$WORK_DIRECTORY/ss"
 FAKE_QRENCODE="$WORK_DIRECTORY/qrencode"
 
@@ -65,6 +66,12 @@ case "$*" in
 	'status mini-singbox.service --no-pager --lines 7') printf 'mock service log\n' ;;
 	*) printf 'unexpected mock systemctl invocation: %s\n' "$*" >&2; exit 1 ;;
 esac
+EOF
+
+cat > "$FAKE_RC_SERVICE" <<'EOF'
+#!/bin/sh
+[ "$1" = mini-singbox ] && [ "$2" = status ] || exit 1
+printf 'mock OpenRC service active\n'
 EOF
 
 cat > "$FAKE_SS" <<'EOF'
@@ -97,7 +104,7 @@ case "$*" in
 esac
 EOF
 
-chmod 0755 "$FAKE_SYSTEMCTL" "$FAKE_SS" "$FAKE_QRENCODE"
+chmod 0755 "$FAKE_SYSTEMCTL" "$FAKE_RC_SERVICE" "$FAKE_SS" "$FAKE_QRENCODE"
 
 run_control() {
 	env \
@@ -109,6 +116,17 @@ run_control() {
 		MINI_SINGBOX_SS="$FAKE_SS" \
 		MINI_SINGBOX_QRENCODE="$FAKE_QRENCODE" \
 		MINI_SINGBOX_INIT_SYSTEM=systemd \
+		"$CONTROL_TOOL" "$@"
+}
+
+run_control_openrc() {
+	env \
+		MINI_SINGBOX_BINARY="$BINARY" \
+		MINI_SINGBOX_CONFIG_DIR="$CONFIG_DIRECTORY" \
+		MINI_SINGBOX_SERVICE_USER=mini-singbox-control-test-user \
+		MINI_SINGBOX_RC_SERVICE="$FAKE_RC_SERVICE" \
+		MINI_SINGBOX_OPENRC_LOG_PATH="$WORK_DIRECTORY/openrc-service.log" \
+		MINI_SINGBOX_INIT_SYSTEM=openrc \
 		"$CONTROL_TOOL" "$@"
 }
 
@@ -127,6 +145,22 @@ grep -Fq 'Hysteria2 public: udp/25421' "$WORK_DIRECTORY/status.txt"
 grep -Fq 'AnyTLS:      tcp/20003, listening' "$WORK_DIRECTORY/status.txt"
 grep -Fq 'AnyTLS public: tcp/36279' "$WORK_DIRECTORY/status.txt"
 run_control logs 7 | grep -Fq 'mock service log'
+printf 'line one\nline two\nline three\n' > "$WORK_DIRECTORY/openrc-service.log"
+run_control_openrc logs 2 > "$WORK_DIRECTORY/openrc-logs.txt"
+grep -Fxq 'line two' "$WORK_DIRECTORY/openrc-logs.txt"
+grep -Fxq 'line three' "$WORK_DIRECTORY/openrc-logs.txt"
+if grep -Fq 'line one' "$WORK_DIRECTORY/openrc-logs.txt"; then
+	echo 'OpenRC logs ignored the requested line limit' >&2
+	exit 1
+fi
+mv "$WORK_DIRECTORY/openrc-service.log" "$WORK_DIRECTORY/openrc-service.log.real"
+ln -s "$WORK_DIRECTORY/openrc-service.log.real" "$WORK_DIRECTORY/openrc-service.log"
+if run_control_openrc logs 2 >/dev/null 2>&1; then
+	echo 'OpenRC logs followed an unsafe symbolic link' >&2
+	exit 1
+fi
+rm "$WORK_DIRECTORY/openrc-service.log"
+mv "$WORK_DIRECTORY/openrc-service.log.real" "$WORK_DIRECTORY/openrc-service.log"
 run_control tune plan | grep -Fq 'Plan'
 run_control tune apply --dry-run | grep -Fq 'Result: dry run; no system state changed'
 run_control qr all > "$WORK_DIRECTORY/qr-all.txt"

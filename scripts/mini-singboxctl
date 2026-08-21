@@ -17,6 +17,7 @@ JQ="${MINI_SINGBOX_JQ:-jq}"
 SS="${MINI_SINGBOX_SS:-ss}"
 RC_SERVICE="${MINI_SINGBOX_RC_SERVICE:-rc-service}"
 LOGREAD="${MINI_SINGBOX_LOGREAD:-logread}"
+OPENRC_LOG_PATH="${MINI_SINGBOX_OPENRC_LOG_PATH:-/var/log/mini-singbox/service.log}"
 EXTERNAL_PID_FILE="${MINI_SINGBOX_EXTERNAL_PID_FILE:-/run/mini-singbox/mini-singbox.pid}"
 
 fail() {
@@ -502,7 +503,15 @@ show_logs() {
 	case "$(detect_runtime)" in
 		systemd) exec "$SYSTEMCTL" status "$SERVICE" --no-pager --lines "$lines" ;;
 		openrc)
-			if command_available "$LOGREAD"; then
+			if [ -L "$OPENRC_LOG_PATH" ]; then
+				fail "OpenRC log file must not be a symbolic link: $OPENRC_LOG_PATH"
+			elif [ -f "$OPENRC_LOG_PATH" ]; then
+				if [ -s "$OPENRC_LOG_PATH" ]; then
+					tail -n "$lines" "$OPENRC_LOG_PATH"
+				else
+					"$RC_SERVICE" "$OPENRC_SERVICE" status
+				fi
+			elif command_available "$LOGREAD"; then
 				log_output="$("$LOGREAD" 2>/dev/null || true)"
 				matched_logs="$(printf '%s\n' "$log_output" | grep 'mini-singbox' | tail -n "$lines" || true)"
 				if [ -n "$matched_logs" ]; then

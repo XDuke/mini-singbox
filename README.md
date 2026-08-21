@@ -32,6 +32,8 @@ OCI 容器运行链。正式标签会等 Alpine/OpenRC 与真实客户端验收�
   `status` 中持续提示核对服务商 NAT 映射，避免监听正常却生成不可用的客户端配置；
 - `qr anytls` 与 `qr all` 现在始终显示 AnyTLS 已启用及认证配置文件路径；安全默认仍不
   伪造无法携带自签证书信任信息的通用二维码。
+- OpenRC 不再依赖容器里可能不存在的 syslog socket；服务输出写入 root 专属本地日志，
+  启动时超过 1 MiB 会保留最近 512 KiB，`mini-singboxctl logs` 可直接读取真实错误。
 
 Alpine、外部 supervisor 和 OCI 的边界与测试方法见
 [Alpine 与容器运行指南](docs/alpine-container.md)。
@@ -434,6 +436,7 @@ sudo mini-singboxctl tune plan --bw 500 --rtt 80
 | `/etc/mini-singbox/share-*.txt` | `0600` | Reality/Hysteria2 分享链接；AnyTLS 仅危险兼容模式生成 |
 | `/etc/mini-singbox/share-*.png` | `0600` | Reality/Hysteria2 二维码；AnyTLS 仅危险兼容模式生成 |
 | `/var/lib/mini-singbox/tune/` | `0700` | root 专属调优基线、活动状态和历史回滚记录 |
+| `/var/log/mini-singbox/service.log` | `0600` | OpenRC stdout/stderr；启动时有界裁剪，可能包含连接元数据 |
 | `/etc/sysctl.d/90-mini-singbox-tune.conf` | `0644` | 仅含本项目实际拥有的 TCP sysctl |
 | `/var/backups/mini-singbox/` | `0700` | 部署前回滚备份，可能包含仍有效的历史凭据 |
 

@@ -25,7 +25,16 @@ esac
 
 echo "mini-singbox uninstaller: program and service files will be removed"
 if [ "$PURGE" = "1" ]; then
-	echo "mini-singbox uninstaller: PURGE=1 will remove /etc/mini-singbox and /var/lib/mini-singbox"
+	echo "mini-singbox uninstaller: PURGE=1 will remove configuration, tune state, and service logs"
+	OPENRC_LOG_DIR=/var/log/mini-singbox
+	[ "$OPENRC_LOG_DIR" = "/var/log/mini-singbox" ] || {
+		echo "mini-singbox uninstaller: refusing unsafe log path" >&2
+		exit 1
+	}
+	if [ -L "$OPENRC_LOG_DIR" ]; then
+		echo "mini-singbox uninstaller: refusing symbolic-link log path: $OPENRC_LOG_DIR" >&2
+		exit 1
+	fi
 fi
 
 RUNTIME=""
@@ -95,9 +104,10 @@ fi
 if [ "$PURGE" = "1" ]; then
 	rm -rf /etc/mini-singbox
 	rm -rf /var/lib/mini-singbox
-	echo "removed /etc/mini-singbox and /var/lib/mini-singbox; this cannot be recovered by the uninstaller"
+	rm -rf "$OPENRC_LOG_DIR"
+	echo "removed /etc/mini-singbox, /var/lib/mini-singbox, and /var/log/mini-singbox; this cannot be recovered by the uninstaller"
 else
-	echo "kept /etc/mini-singbox and /var/lib/mini-singbox; set PURGE=1 to remove configuration, keys, and tune history"
+	echo "kept configuration, tune history, and service logs; set PURGE=1 to remove them"
 fi
 
 if [ "$PURGE_BACKUPS" = "1" ]; then

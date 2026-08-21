@@ -39,6 +39,9 @@ Semantic Versioning.
   and uninstall transactions across systemd, OpenRC, and external runtimes.
 - AnyTLS delivery commands now report the enabled protocol and authenticated
   outbound path even when the secure default intentionally omits a generic QR.
+- OpenRC service output now uses a root-only bounded local log instead of an
+  unverified syslog socket, and the control tool reads it without following
+  symbolic links.
 - Formal release bundles now include OpenRC/external/container helpers,
   release metadata, and the immutable OCI digest alongside binary checksums,
   SBOM, and provenance.

@@ -45,7 +45,10 @@ compile on the target. The OpenRC unit:
 - uses a root-owned PID file and OpenRC `supervise-daemon`;
 - sets `no_new_privs`, a restrictive umask, bounded respawn, and TERM/KILL stop
   timing;
-- logs stdout and stderr through `logger`;
+- appends stdout and stderr to root-only `/var/log/mini-singbox/service.log`
+  without requiring a syslog daemon or `/dev/log` socket;
+- trims that log before service start when it exceeds 1 MiB, retaining the
+  newest 512 KiB so small disks do not accumulate unbounded restart history;
 - enables the service in the default runlevel only after configuration checks.
 
 Useful commands:
@@ -59,6 +62,11 @@ sudo rc-update show default | grep mini-singbox
 sudo mini-singboxctl status
 sudo mini-singboxctl logs 100
 ```
+
+The log file is mode `0600` because connection errors can contain client or
+destination metadata. `mini-singboxctl logs` rejects symbolic-link log paths.
+`PURGE=1 mini-singbox-uninstall` removes the log; a credential-preserving
+uninstall keeps it for incident review.
 
 OpenRC does not provide the systemd `MemoryMax` or `TasksMax` cgroup controls.
 `GOMEMLIMIT=48MiB`, `GOMAXPROCS=1`, and `GOGC=70` remain active, but they are
