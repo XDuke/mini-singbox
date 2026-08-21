@@ -1302,8 +1302,9 @@ if [ "$RUNTIME" = openrc ]; then
 	fi
 	install -d -m 0700 -o root -g root "$OPENRC_LOG_DIR"
 	if [ -e "$OPENRC_LOG_PATH" ]; then
-		[ -f "$OPENRC_LOG_PATH" ] && [ ! -L "$OPENRC_LOG_PATH" ] || \
+		if [ ! -f "$OPENRC_LOG_PATH" ] || [ -L "$OPENRC_LOG_PATH" ]; then
 			fail "OpenRC log file is unsafe: $OPENRC_LOG_PATH"
+		fi
 		chown root:root "$OPENRC_LOG_PATH"
 		chmod 0600 "$OPENRC_LOG_PATH"
 	else

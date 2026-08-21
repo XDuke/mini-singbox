@@ -30,7 +30,9 @@ depend() {
 rotate_service_log() {
 	log_path="/var/log/mini-singbox/service.log"
 	[ -e "$log_path" ] || return 0
-	[ -f "$log_path" ] && [ ! -L "$log_path" ] || return 1
+	if [ ! -f "$log_path" ] || [ -L "$log_path" ]; then
+		return 1
+	fi
 	log_size="$(wc -c < "$log_path")" || return 1
 	[ "$log_size" -le 1048576 ] && return 0
 	log_tmp="${log_path}.tmp.$$"
