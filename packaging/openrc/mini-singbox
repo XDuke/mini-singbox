@@ -41,7 +41,7 @@ rotate_service_log() {
 		rm -f -- "$log_tmp"
 		return 1
 	fi
-	if ! chmod 0600 "$log_tmp" || ! chown root:root "$log_tmp" || \
+	if ! chmod 0620 "$log_tmp" || ! chown root:mini-singbox "$log_tmp" || \
 		! mv -f -- "$log_tmp" "$log_path"; then
 		rm -f -- "$log_tmp"
 		return 1

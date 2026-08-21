@@ -1300,15 +1300,15 @@ if [ "$RUNTIME" = openrc ]; then
 	if [ -L "$OPENRC_LOG_DIR" ] || { [ -e "$OPENRC_LOG_DIR" ] && [ ! -d "$OPENRC_LOG_DIR" ]; }; then
 		fail "OpenRC log directory is missing or unsafe: $OPENRC_LOG_DIR"
 	fi
-	install -d -m 0700 -o root -g root "$OPENRC_LOG_DIR"
+	install -d -m 0710 -o root -g "$SERVICE_USER" "$OPENRC_LOG_DIR"
 	if [ -e "$OPENRC_LOG_PATH" ]; then
 		if [ ! -f "$OPENRC_LOG_PATH" ] || [ -L "$OPENRC_LOG_PATH" ]; then
 			fail "OpenRC log file is unsafe: $OPENRC_LOG_PATH"
 		fi
-		chown root:root "$OPENRC_LOG_PATH"
-		chmod 0600 "$OPENRC_LOG_PATH"
+		chown "root:$SERVICE_USER" "$OPENRC_LOG_PATH"
+		chmod 0620 "$OPENRC_LOG_PATH"
 	else
-		install -m 0600 -o root -g root /dev/null "$OPENRC_LOG_PATH"
+		install -m 0620 -o root -g "$SERVICE_USER" /dev/null "$OPENRC_LOG_PATH"
 	fi
 fi
 if [ "$RUNTIME" = external ]; then

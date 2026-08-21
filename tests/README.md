@@ -81,7 +81,7 @@ then exercises either:
 - Alpine external-supervisor start/status, blocked container tuning, non-root
   identity, transactional certificate renewal, restart and purge; or
 - a booted OpenRC service with automatic container-profile detection,
-  default-runlevel enablement, blocked host tuning, real root-only service-log
+  default-runlevel enablement, blocked host tuning, real private service-log
   capture and bounded rotation, restart, status, logs and purge; and
 - transactional migration from an inactive legacy external deployment to the
   detected containerized OpenRC service, including retirement of the obsolete

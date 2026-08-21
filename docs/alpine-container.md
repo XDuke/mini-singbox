@@ -45,8 +45,9 @@ compile on the target. The OpenRC unit:
 - uses a root-owned PID file and OpenRC `supervise-daemon`;
 - sets `no_new_privs`, a restrictive umask, bounded respawn, and TERM/KILL stop
   timing;
-- appends stdout and stderr to root-only `/var/log/mini-singbox/service.log`
-  without requiring a syslog daemon or `/dev/log` socket;
+- appends stdout and stderr to private `/var/log/mini-singbox/service.log`
+  without requiring a syslog daemon or `/dev/log` socket; the file is root
+  owned, mode `0620`, and writable only by the service group;
 - trims that log before service start when it exceeds 1 MiB, retaining the
   newest 512 KiB so small disks do not accumulate unbounded restart history;
 - enables the service in the default runlevel only after configuration checks.
@@ -63,8 +64,11 @@ sudo mini-singboxctl status
 sudo mini-singboxctl logs 100
 ```
 
-The log file is mode `0600` because connection errors can contain client or
-destination metadata. `mini-singboxctl logs` rejects symbolic-link log paths.
+The log directory is mode `0710` and the log file is mode `0620` because
+connection errors can contain client or destination metadata. OpenRC opens the
+file after dropping to the service identity, so the dedicated service group has
+write-only access while root retains ownership and read access.
+`mini-singboxctl logs` rejects symbolic-link log paths.
 `PURGE=1 mini-singbox-uninstall` removes the log; a credential-preserving
 uninstall keeps it for incident review.
 

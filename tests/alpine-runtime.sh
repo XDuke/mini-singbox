@@ -122,20 +122,30 @@ if [ "$MODE" != external ]; then
 		exit 1
 	fi
 	OPENRC_LOG_PATH=/var/log/mini-singbox/service.log
+	test "$(stat -c '%a' /var/log/mini-singbox)" = 710
+	test "$(stat -c '%U:%G' /var/log/mini-singbox)" = root:mini-singbox
 	test -f "$OPENRC_LOG_PATH"
 	test ! -L "$OPENRC_LOG_PATH"
-	test "$(stat -c '%a' "$OPENRC_LOG_PATH")" = 600
-	test "$(stat -c '%U:%G' "$OPENRC_LOG_PATH")" = root:root
+	test "$(stat -c '%a' "$OPENRC_LOG_PATH")" = 620
+	test "$(stat -c '%U:%G' "$OPENRC_LOG_PATH")" = root:mini-singbox
+	service_pid="$(ps -o pid= -C mini-singbox | awk 'NR == 1 { print $1 }')"
+	test -n "$service_pid"
+	test "$(runuser -u mini-singbox -- readlink "/proc/$service_pid/fd/1")" = "$OPENRC_LOG_PATH"
+	test "$(runuser -u mini-singbox -- readlink "/proc/$service_pid/fd/2")" = "$OPENRC_LOG_PATH"
+	log_marker='mini-singbox OpenRC log capture test'
+	printf '%s\n' "$log_marker" >> "$OPENRC_LOG_PATH"
 	mini-singboxctl logs 50 > "$test_root/service-logs.txt"
-	grep -aFq 'sing-box started' "$test_root/service-logs.txt"
+	grep -aFq "$log_marker" "$test_root/service-logs.txt"
 	if [ "$MODE" = openrc-auto ]; then
 		dd if=/dev/zero bs=1100000 count=1 >> "$OPENRC_LOG_PATH" 2>/dev/null
+		log_marker='mini-singbox OpenRC rotation tail test'
+		printf '%s\n' "$log_marker" >> "$OPENRC_LOG_PATH"
 	fi
 	rc-service mini-singbox restart
 	sleep 2
 	rc-service mini-singbox status
 	mini-singboxctl logs 50 > "$test_root/service-logs-after-restart.txt"
-	grep -aFq 'sing-box started' "$test_root/service-logs-after-restart.txt"
+	grep -aFq "$log_marker" "$test_root/service-logs-after-restart.txt"
 	if [ "$MODE" = openrc-auto ]; then
 		test "$(stat -c '%s' "$OPENRC_LOG_PATH")" -lt 600000
 		mv /var/log/mini-singbox "$test_root/openrc-log-real"

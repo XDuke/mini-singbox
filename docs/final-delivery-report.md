@@ -39,7 +39,7 @@ The live 128 MiB validation is recorded in [validation.md](validation.md).
 Deployment never compiles on the target, verifies exact immutable assets,
 supports shared NAT, uses a dedicated non-root user, observes startup/listeners,
 and retains a guarded rollback backup. OpenRC writes service output to a bounded
-root-only local log without requiring syslog. `mini-singboxctl` provides
+root-owned private local log without requiring syslog. `mini-singboxctl` provides
 on-demand status, certificate, logs, version and explicit credential QR/link
 display.
 
