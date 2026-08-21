@@ -7,13 +7,12 @@
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC、Alpine Linux 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。当前正式版 `v1.1.1` 与正在验收的 `v1.2.0` 候选版均内置官方
-sing-box `v1.13.18`。
+自动更新守护进程。当前正式版 `v1.2.0` 内置官方 sing-box `v1.13.18`。
 
-## v1.2.0 候选升级
+## v1.2.0 正式版
 
 这一轮在不增加常驻管理面板、不提高默认 128 MiB 资源上限的前提下，补齐 Alpine 与
-OCI 容器运行链。正式标签会等 Alpine/OpenRC 与真实客户端验收后创建。
+OCI 容器运行链，并保持小虚拟机只下载已构建二进制、不在目标机编译。
 
 - 一行安装改为“Release 资产优先”：先验证独立固定的 minisign 公钥、签名校验清单、
   版本元数据和每个部署文件，再执行安装；`v1.1.1` 仍保留兼容回退路径；
@@ -142,7 +141,7 @@ SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二�
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.1.1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.2.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -158,9 +157,9 @@ bash bootstrap.sh
 完全固定、分步审阅方式：
 
 ```sh
-git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
-test "$(git cat-file -t refs/tags/v1.1.1)" = tag
+test "$(git cat-file -t refs/tags/v1.2.0)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -206,7 +205,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 目的 | 一行部署命令前缀 |
 |---|---|
 | 保留配置升级/重装 | 无，直接重跑 |
-| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.1.1` |
+| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.2.0` |
 | 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
 | 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
 | 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
@@ -477,9 +476,10 @@ TasksMax=64
 - TCP 重传率约 `0.061%`；
 - UDP/IP/网卡错误、丢包、服务重启、警告和 OOM 均为 `0`。
 
-以上是旧版参考环境的实测值，不是对 `v1.1.1` 或所有线路、宿主机的性能保证。
-`v1.1.1` 发布门禁确认 128 MiB CI 容器内的生成、检查和短时空载启动，不把它表述为
-真实流量或长时间验收。旧版验证摘要见[正式版验证记录](docs/validation.md)。
+以上是旧版参考环境的实测值，不是对 `v1.1.1`、`v1.2.0` 或所有线路、宿主机的性能保证。
+`v1.2.0` 发布门禁进一步覆盖 Alpine/OpenRC、外部 supervisor、rootless Podman、128 MiB
+限制和升级回滚；这些仍属于功能验收，不冒充每一种宿主环境下的长期性能保证。旧版
+真实流量摘要见[正式版验证记录](docs/validation.md)。
 
 ## Docker Compose（仅开发和验证）
 
@@ -488,7 +488,7 @@ TasksMax=64
 需要复现容器硬化检查的开发机可以执行：
 
 ```sh
-git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
 mkdir config
 sudo chown 65532:65532 config

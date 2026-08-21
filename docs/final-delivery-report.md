@@ -27,19 +27,21 @@ are silent by default.
 
 ## Build and supply chain
 
-The module uses official sing-box v1.13.16 without `replace` and Go 1.26.5.
+The module uses official sing-box v1.13.18 without `replace` and Go 1.26.6.
 Linux releases are static amd64/arm64 builds. CI and Release enforce formatting,
 module verification, vet, unit/race/fuzz tests, govulncheck, compiled dependency
-and forbidden feature scans, shell analysis, container hardening, signed
-checksums, SPDX SBOM and GitHub provenance.
+and forbidden feature scans, shell analysis, systemd/OpenRC and rootless
+container acceptance, signed checksums, SPDX SBOM and GitHub provenance.
 
 ## Runtime and delivery
 
 The live 128 MiB validation is recorded in [validation.md](validation.md).
 Deployment never compiles on the target, verifies exact immutable assets,
 supports shared NAT, uses a dedicated non-root user, observes startup/listeners,
-and retains a guarded rollback backup. `mini-singboxctl` provides on-demand
-status, certificate, logs, version and explicit credential QR/link display.
+and retains a guarded rollback backup. OpenRC writes service output to a bounded
+root-only local log without requiring syslog. `mini-singboxctl` provides
+on-demand status, certificate, logs, version and explicit credential QR/link
+display.
 
 ## Remaining limitations
 

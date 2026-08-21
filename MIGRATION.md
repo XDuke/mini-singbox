@@ -65,7 +65,7 @@ Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
 
-For a clean installation, deploy `v1.1.1`, import the Reality and Hysteria2 QR
+For a clean installation, deploy `v1.2.0`, import the Reality and Hysteria2 QR
 codes, and merge the authenticated AnyTLS outbound into the sing-box client.
 For an early pre-v1 candidate, keep a private backup, stop its service, and copy
 only the candidate's local `config.json`, Reality private key, TLS key, and TLS

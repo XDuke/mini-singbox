@@ -3,7 +3,7 @@
 All notable changes to `mini-singbox` are recorded here. The project follows
 Semantic Versioning.
 
-## Unreleased
+## v1.2.0 - 2026-08-20
 
 ### Added
 
