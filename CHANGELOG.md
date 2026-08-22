@@ -53,6 +53,11 @@ Semantic Versioning.
 - Formal release bundles now include OpenRC/external/container helpers,
   release metadata, and the immutable OCI digest alongside binary checksums,
   SBOM, and provenance.
+- Existing installations now stage the verified binary with a same-filesystem
+  hard link when available, rename the installed binary directly into the
+  rollback directory, and atomically switch the staged file. This removes two
+  avoidable large-file copies and lowers upgrade page-cache pressure on
+  128-MiB containers while retaining cross-filesystem fallback and rollback.
 
 ### Security
 

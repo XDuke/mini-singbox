@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC2034,SC2329
+# shellcheck disable=SC1091,SC2016,SC2034,SC2329
 set -Eeuo pipefail
 
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
@@ -62,6 +62,13 @@ grep -Fq 'runtime=' scripts/deploy.sh
 grep -Fq 'openrc' scripts/deploy.sh
 grep -Fq 'openrc-container' scripts/deploy.sh
 grep -Fq 'migrating an inactive external deployment' scripts/deploy.sh
+grep -Fq 'STAGED_BINARY="$INSTALL_PATH.new.$$"' scripts/deploy.sh
+grep -Fq 'ln "$BUILD_BINARY" "$STAGED_BINARY"' scripts/deploy.sh
+grep -Fq 'mv "$INSTALL_PATH" "$BACKUP_DIR/mini-singbox"' scripts/deploy.sh
+if grep -Fq 'cp -a "$INSTALL_PATH" "$BACKUP_DIR/mini-singbox"' scripts/deploy.sh; then
+	echo 'low-memory upgrades must rename the installed binary into the backup' >&2
+	exit 1
+fi
 grep -Fq 'tuning_is_host_owned' scripts/mini-singboxctl
 grep -Fq 'output_log="/var/log/mini-singbox/service.log"' packaging/openrc/mini-singbox
 grep -Fq 'MINI_SINGBOX_OPENRC_LOG_PATH' scripts/mini-singboxctl

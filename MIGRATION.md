@@ -42,6 +42,13 @@ installer: all three paths share the current signed assets, strict config,
 transactional credentials, control commands, architecture checks, and release
 identity.
 
+The `v1.2.0` upgrade path also reduces transient memory pressure on small
+containers. After verification, it stages the candidate on the installation
+filesystem, renames the previous binary into the rollback directory, and
+switches the staged binary without keeping multiple copied executables in page
+cache. The configuration and credential-preserving rollback contract is
+unchanged.
+
 `v1.2.0` also replaces the single AnyTLS delivery with three authenticated
 client choices. Re-running the installer rebuilds delivery files without
 rotating the server password or certificate:

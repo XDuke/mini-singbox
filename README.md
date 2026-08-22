@@ -37,6 +37,9 @@ OCI 容器运行链，并保持小虚拟机只下载已构建二进制、不在�
 - OpenRC 不再依赖容器里可能不存在的 syslog socket；服务输出写入 root 管理、仅服务组
   可追加的私有本地日志，启动时超过 1 MiB 会保留最近 512 KiB，`mini-singboxctl logs`
   可直接读取真实错误。
+- 低内存升级不再同时复制“下载文件、旧二进制备份、新安装文件”三份大文件：验证后的
+  二进制优先在安装文件系统硬链接暂存，旧二进制直接重命名进入回滚目录，再原子切换；
+  仍保留跨文件系统回退和失败回滚。
 
 Alpine、外部 supervisor 和 OCI 的边界与测试方法见
 [Alpine 与容器运行指南](docs/alpine-container.md)。
@@ -95,6 +98,7 @@ Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或�
 - 自动生成 Reality、Hysteria2 分享链接和二维码，以及经过证书认证的 AnyTLS
   sing-box、Mihomo 和 v2rayN 客户端交付；
 - 只下载当前精确版本的 CI 静态二进制，不在小虚拟机编译；
+- 128 MiB 升级优先使用硬链接暂存和重命名切换二进制，减少大文件复制产生的页缓存峰值；
 - 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
 - 部署后离线检测内核、cgroup 有效内存和 TCP 能力，只应用可验证、可持久化、可回滚的
   安全核心调优；
@@ -176,8 +180,8 @@ sudo ./scripts/deploy.sh
 5. 下载正式 Release 的静态二进制；
 6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
 7. 生成安全凭据、证书、Reality/Hysteria2 二维码和三种认证证书的 AnyTLS 客户端交付；
-8. 安装非 root 服务并检查配置、进程身份、监听端口和启动状态；external 模式只准备
-   前台入口，明确交给外层 supervisor 启动；
+8. 以低内存暂存/重命名方式备份并切换二进制，安装非 root 服务并检查配置、进程身份、
+   监听端口和启动状态；external 模式只准备前台入口，明确交给外层 supervisor 启动；
 9. 仅在真正拥有宿主内核的 systemd/OpenRC 环境，为 Reality/AnyTLS 自动执行保守的
    TCP 检测、计划、应用和回读验证；
 10. 为已有安装和 TCP 调优分别保留精确回滚状态。

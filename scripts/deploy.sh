@@ -955,6 +955,7 @@ DELIVERY_REPLACED=0
 DEPLOYMENT_INFO_REWRITTEN=0
 EXTERNAL_RUN_REMOVED=0
 BACKUP_DIR=""
+STAGED_BINARY=""
 
 rollback() {
 	warn "deployment failed after installation began; restoring the previous state"
@@ -1043,6 +1044,11 @@ cleanup() {
 	if [ "$status" -ne 0 ] && [ "$DEPLOYMENT_STARTED" -eq 1 ] && [ "$DEPLOYMENT_SUCCEEDED" -eq 0 ]; then
 		rollback
 	fi
+	case "${STAGED_BINARY:-}" in
+	"$INSTALL_PATH".new.*) rm -f -- "$STAGED_BINARY" ;;
+	"") ;;
+	*) warn "refusing to remove unexpected staged binary path $STAGED_BINARY" ;;
+	esac
 	case "${WORK_DIR:-}" in
 		/var/tmp/mini-singbox-deploy.*) rm -rf "$WORK_DIR" ;;
 		"") ;;
@@ -1249,10 +1255,6 @@ BACKUP_DIR="$BACKUP_ROOT/$TIMESTAMP-$SHORT_COMMIT-$$"
 install -d -m 0700 "$BACKUP_ROOT"
 install -d -m 0700 "$BACKUP_DIR"
 
-if [ -f "$INSTALL_PATH" ]; then
-	HAD_BINARY=1
-	cp -a "$INSTALL_PATH" "$BACKUP_DIR/mini-singbox"
-fi
 if [ -f "$CONTROL_PATH" ]; then
 	HAD_CONTROL=1
 	cp -a "$CONTROL_PATH" "$BACKUP_DIR/mini-singboxctl"
@@ -1292,10 +1294,29 @@ if [ "$RUNTIME" = external ] && [ "$WAS_ACTIVE" -eq 1 ]; then
 	fail "external process is active; stop the surrounding supervisor before upgrading"
 fi
 
+# Keep the verified candidate on the installation filesystem before stopping
+# the service. A hard link avoids holding extra copies of the ~18 MiB binary in
+# the page cache on 128 MiB containers; cross-filesystem layouts fall back to a
+# normal staged copy while the existing service remains available.
+STAGED_BINARY="$INSTALL_PATH.new.$$"
+if [ -e "$STAGED_BINARY" ] || [ -L "$STAGED_BINARY" ]; then
+	fail "staged binary path already exists: $STAGED_BINARY"
+fi
+if ! ln "$BUILD_BINARY" "$STAGED_BINARY" 2>/dev/null; then
+	install -m 0755 "$BUILD_BINARY" "$STAGED_BINARY"
+fi
+chown root:root "$STAGED_BINARY"
+chmod 0755 "$STAGED_BINARY"
+
 DEPLOYMENT_STARTED=1
 log "Installing the binary, on-demand tools, configuration, and $RUNTIME runtime"
 runtime_stop >/dev/null 2>&1 || true
-install -m 0755 "$BUILD_BINARY" "$INSTALL_PATH"
+if [ -f "$INSTALL_PATH" ]; then
+	mv "$INSTALL_PATH" "$BACKUP_DIR/mini-singbox"
+	HAD_BINARY=1
+fi
+mv "$STAGED_BINARY" "$INSTALL_PATH"
+STAGED_BINARY=""
 install -m 0755 "$CONTROL_SOURCE" "$CONTROL_PATH"
 install -m 0755 "$CONTAINER_CONTROL_SOURCE" "$CONTAINER_CONTROL_PATH"
 install -m 0755 "$UPDATE_SOURCE" "$UPDATE_PATH"

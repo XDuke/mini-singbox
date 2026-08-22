@@ -76,6 +76,10 @@ OpenRC does not provide the systemd `MemoryMax` or `TasksMax` cgroup controls.
 `GOMEMLIMIT=48MiB`, `GOMAXPROCS=1`, and `GOGC=70` remain active, but they are
 runtime settings rather than a hard container memory ceiling. Set host/container
 limits in the provider control plane when a hard 128 MiB limit is required.
+Host/OpenRC upgrades avoid redundant executable copies: the verified candidate
+is hard-linked onto the installation filesystem when possible, the running
+binary is renamed into the rollback directory, and the staged file is switched
+into place. A guarded copy fallback remains for split filesystems.
 In an `openrc-container` profile, deployment-time tuning and
 `mini-singboxctl tune apply` are blocked because the surrounding container
 engine owns the kernel and `/proc/sys` may be read-only.
