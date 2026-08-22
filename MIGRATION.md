@@ -89,8 +89,8 @@ Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
 
-For a clean installation after the formal `v1.2.0` release, import the Reality
-and Hysteria2 QR codes, then select the AnyTLS export matching the client.
+For a clean `v1.2.0` installation, import the Reality and Hysteria2 QR codes,
+then select the AnyTLS export matching the client.
 For an early pre-v1 candidate, keep a private backup, stop its service, and copy
 only the candidate's local `config.json`, Reality private key, TLS key, and TLS
 certificate into `/etc/mini-singbox` with the new service-user ownership. Run
@@ -99,7 +99,7 @@ certificate into `/etc/mini-singbox` with the new service-user ownership. Run
 To intentionally rotate every credential after migration:
 
 ```sh
-MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL --proto =https --tlsv1.2 https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 Existing clients stop working after regeneration. Ordinary upgrades preserve

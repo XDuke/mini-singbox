@@ -7,10 +7,9 @@
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC、Alpine Linux 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。当前正式版是 `v1.1.1`；本分支为 `v1.2.0` 候选版，继续使用官方
-sing-box `v1.13.18`。
+自动更新守护进程。当前正式版是 `v1.2.0`，继续使用官方 sing-box `v1.13.18`。
 
-## v1.2.0 候选版
+## v1.2.0 正式版
 
 这一轮在不增加常驻管理面板、不提高默认 128 MiB 资源上限的前提下，补齐 Alpine 与
 OCI 容器运行链，并保持小虚拟机只下载已构建二进制、不在目标机编译。
@@ -149,7 +148,7 @@ SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二�
 `MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到当前正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.1.1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.2.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -165,9 +164,9 @@ bash bootstrap.sh
 完全固定、分步审阅方式：
 
 ```sh
-git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
-test "$(git cat-file -t refs/tags/v1.1.1)" = tag
+test "$(git cat-file -t refs/tags/v1.2.0)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -213,7 +212,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 目的 | 一行部署命令前缀 |
 |---|---|
 | 保留配置升级/重装 | 无，直接重跑 |
-| 固定当前正式版 | `MINI_SINGBOX_VERSION=v1.1.1` |
+| 固定当前正式版 | `MINI_SINGBOX_VERSION=v1.2.0` |
 | 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
 | 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
 | 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
@@ -507,7 +506,7 @@ TasksMax=64
 需要复现容器硬化检查的开发机可以执行：
 
 ```sh
-git clone --branch develop/v1.2.0-alpine --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
 mkdir config
 sudo chown 65532:65532 config

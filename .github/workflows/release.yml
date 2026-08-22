@@ -294,7 +294,7 @@ jobs:
           done
           test "$(find "$upload_dir" -maxdepth 1 -type f | wc -l)" -eq "${#files[@]}"
       - name: Upload audit evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-audit-${{ env.RELEASE_TAG }}
           path: |
@@ -304,7 +304,7 @@ jobs:
             dist/go-version-arm64.txt
             dist/nm-amd64.txt
       - name: Preserve signed release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-bundle-${{ env.RELEASE_TAG }}
           if-no-files-found: error

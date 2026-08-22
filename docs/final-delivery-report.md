@@ -38,7 +38,7 @@ container acceptance, signed checksums, SPDX SBOM and GitHub provenance.
 The live 128 MiB validation is recorded in [validation.md](validation.md).
 Deployment never compiles on the target, verifies exact immutable assets,
 supports shared NAT, uses a dedicated non-root user, observes startup/listeners,
-and retains a guarded rollback backup. Candidate upgrades use a same-filesystem
+and retains a guarded rollback backup. Upgrades use a same-filesystem
 hard-link stage and rename-based binary backup/switch to avoid redundant
 executable copies in the page cache; cross-filesystem layouts retain a guarded
 copy fallback. OpenRC writes service output to a bounded

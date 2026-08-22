@@ -3,7 +3,7 @@
 All notable changes to `mini-singbox` are recorded here. The project follows
 Semantic Versioning.
 
-## v1.2.0 - Unreleased
+## v1.2.0 - 2026-08-22
 
 ### Added
 
@@ -53,6 +53,8 @@ Semantic Versioning.
 - Formal release bundles now include OpenRC/external/container helpers,
   release metadata, and the immutable OCI digest alongside binary checksums,
   SBOM, and provenance.
+- GitHub Actions artifact transfer now uses the current Node 24-based
+  `upload-artifact@v7` and `download-artifact@v8` releases.
 - Existing installations now stage the verified binary with a same-filesystem
   hard link when available, rename the installed binary directly into the
   rollback directory, and atomically switch the staged file. This removes two
