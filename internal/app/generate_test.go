@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"net/url"
@@ -32,7 +33,7 @@ func TestGenerateAllProtocolsAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Files) != 8 {
+	if len(result.Files) != 10 {
 		t.Fatalf("generated files = %v", result.Files)
 	}
 	loaded, err := config.DecodeFile(filepath.Join(output, "config.json"))
@@ -70,7 +71,13 @@ func TestGenerateAllProtocolsAndValidate(t *testing.T) {
 	if client.AnyTLS.SingBoxOutboundFile != "client-anytls-sing-box-outbound.json" {
 		t.Fatalf("AnyTLS authenticated client file = %q", client.AnyTLS.SingBoxOutboundFile)
 	}
+	if client.AnyTLS.MihomoProxyFile != "client-anytls-mihomo.yaml" ||
+		client.AnyTLS.V2RayNShareFile != "share-anytls-v2rayn.txt" {
+		t.Fatalf("AnyTLS client delivery files = %#v", client.AnyTLS)
+	}
 	assertAuthenticatedAnyTLSOutbound(t, filepath.Join(output, client.AnyTLS.SingBoxOutboundFile))
+	assertAuthenticatedAnyTLSMihomo(t, filepath.Join(output, client.AnyTLS.MihomoProxyFile), client.AnyTLS.CertSHA, options.PublicAddress, options.PublicAnyTLSPort, client.AnyTLS.Password, client.AnyTLS.TLSSAN)
+	assertAuthenticatedAnyTLSV2RayN(t, filepath.Join(output, client.AnyTLS.V2RayNShareFile), options.PublicAddress, options.PublicAnyTLSPort, client.AnyTLS.Password, client.AnyTLS.TLSSAN)
 	if _, err := os.Stat(filepath.Join(output, "share-anytls.txt")); !os.IsNotExist(err) {
 		t.Fatalf("unsafe AnyTLS share file exists by default: %v", err)
 	}
@@ -89,6 +96,66 @@ func TestGenerateAllProtocolsAndValidate(t *testing.T) {
 		if strings.Contains(entry.Name(), ".tmp-") || strings.HasSuffix(entry.Name(), ".backup") {
 			t.Fatalf("temporary file left behind: %s", entry.Name())
 		}
+	}
+}
+
+func assertAuthenticatedAnyTLSMihomo(t *testing.T, path, certificateSHA256, address string, port int, password, serverName string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, expected := range []string{
+		"type: anytls", `server: "` + address + `"`, "port: " + strconv.Itoa(port),
+		`password: "` + password + `"`, `sni: "` + serverName + `"`,
+		"skip-cert-verify: true", `fingerprint: "` + certificateSHA256 + `"`,
+	} {
+		if !bytes.Contains(content, []byte(expected)) {
+			t.Fatalf("Mihomo AnyTLS delivery is missing %q: %s", expected, content)
+		}
+	}
+}
+
+func assertAuthenticatedAnyTLSV2RayN(t *testing.T, path, address string, port int, password, serverName string) {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uri := strings.TrimSpace(string(content))
+	const prefix = "v2rayn://anytls/"
+	if !strings.HasPrefix(uri, prefix) {
+		t.Fatalf("v2rayN AnyTLS URI = %q", uri)
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(uri, prefix))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var profile struct {
+		ConfigType     int    `json:"ConfigType"`
+		CoreType       int    `json:"CoreType"`
+		ConfigVersion  int    `json:"ConfigVersion"`
+		Address        string `json:"Address"`
+		Port           int    `json:"Port"`
+		Password       string `json:"Password"`
+		AllowInsecure  string `json:"AllowInsecure"`
+		StreamSecurity string `json:"StreamSecurity"`
+		SNI            string `json:"Sni"`
+		Fingerprint    string `json:"Fingerprint"`
+		Certificate    string `json:"Cert"`
+	}
+	if err := json.Unmarshal(payload, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.ConfigType != 11 || profile.CoreType != 24 || profile.ConfigVersion != 4 ||
+		profile.Address != address || profile.Port != port || profile.Password != password ||
+		profile.AllowInsecure != "false" || profile.StreamSecurity != "tls" ||
+		profile.SNI != serverName || profile.Fingerprint != "chrome" {
+		t.Fatalf("v2rayN AnyTLS profile is incomplete or unsafe: %s", payload)
+	}
+	certificate, _ := pem.Decode([]byte(profile.Certificate))
+	if certificate == nil || certificate.Type != "CERTIFICATE" {
+		t.Fatal("v2rayN AnyTLS profile does not contain a PEM certificate")
 	}
 }
 

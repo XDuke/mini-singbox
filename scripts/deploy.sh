@@ -18,6 +18,10 @@ OPENRC_LOG_PATH="$OPENRC_LOG_DIR/service.log"
 EXTERNAL_PID_FILE="/run/mini-singbox/mini-singbox.pid"
 BACKUP_ROOT="/var/backups/mini-singbox"
 REPOSITORY="XDuke/mini-singbox"
+QR_SOURCES="share-reality share-hysteria2 share-anytls-v2rayn share-anytls"
+DELIVERY_FILES="client-info.json client-anytls-sing-box-outbound.json client-anytls-mihomo.yaml
+share-reality.txt share-hysteria2.txt share-anytls-v2rayn.txt share-anytls.txt
+share-reality.png share-hysteria2.png share-anytls-v2rayn.png share-anytls.png"
 
 log() {
 	printf '\n==> %s\n' "$*"
@@ -808,6 +812,12 @@ if [ "$NEEDS_GENERATION" -eq 0 ] && \
 	jq -e '.anytls' "$CONFIG_DIR/config.json" >/dev/null 2>&1; then
 	if [ ! -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] || \
 		[ -L "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] || \
+		[ ! -f "$CONFIG_DIR/client-anytls-mihomo.yaml" ] || \
+		[ -L "$CONFIG_DIR/client-anytls-mihomo.yaml" ] || \
+		[ ! -f "$CONFIG_DIR/share-anytls-v2rayn.txt" ] || \
+		[ -L "$CONFIG_DIR/share-anytls-v2rayn.txt" ] || \
+		[ ! -f "$CONFIG_DIR/share-anytls-v2rayn.png" ] || \
+		[ -L "$CONFIG_DIR/share-anytls-v2rayn.png" ] || \
 		{ [ "$ALLOW_INSECURE_ANYTLS_SHARE" -eq 0 ] && \
 			{ [ -e "$CONFIG_DIR/share-anytls.txt" ] || [ -L "$CONFIG_DIR/share-anytls.txt" ] || \
 				[ -e "$CONFIG_DIR/share-anytls.png" ] || [ -L "$CONFIG_DIR/share-anytls.png" ]; }; }; then
@@ -998,10 +1008,7 @@ rollback() {
 	fi
 	if [ "${CONFIG_REPLACED:-0}" -eq 0 ] && [ "$HAD_CONFIG" -eq 1 ]; then
 		if [ "${DELIVERY_REPLACED:-0}" -eq 1 ]; then
-			for delivery_file in \
-				client-info.json client-anytls-sing-box-outbound.json \
-				share-reality.txt share-hysteria2.txt share-anytls.txt \
-				share-reality.png share-hysteria2.png share-anytls.png; do
+			for delivery_file in $DELIVERY_FILES; do
 				if [ -f "$BACKUP_DIR/config/$delivery_file" ]; then
 					cp -a "$BACKUP_DIR/config/$delivery_file" "$CONFIG_DIR/$delivery_file"
 				else
@@ -1198,9 +1205,10 @@ if [ "$NEEDS_GENERATION" -eq 1 ]; then
 	runuser -u "$SERVICE_USER" -- "$BUILD_BINARY" check -c "$GENERATED_DIR/config.json"
 	if [ -f "$GENERATED_DIR/share-reality.txt" ] || \
 		[ -f "$GENERATED_DIR/share-hysteria2.txt" ] || \
+		[ -f "$GENERATED_DIR/share-anytls-v2rayn.txt" ] || \
 		[ -f "$GENERATED_DIR/share-anytls.txt" ]; then
 		log "Rendering local QR images without printing credentials"
-		for qr_source in share-reality share-hysteria2 share-anytls; do
+		for qr_source in $QR_SOURCES; do
 			if [ -f "$GENERATED_DIR/$qr_source.txt" ]; then
 				qrencode -l M -t PNG -o "$GENERATED_DIR/$qr_source.png" < "$GENERATED_DIR/$qr_source.txt"
 				chown "$SERVICE_USER:$SERVICE_USER" "$GENERATED_DIR/$qr_source.png"
@@ -1225,7 +1233,7 @@ else
 			--anytls-port "$PUBLIC_ANYTLS_PORT" \
 			--allow-insecure-anytls-share="$ALLOW_INSECURE_ANYTLS_SHARE"
 		log "Rendering refreshed local QR images without printing credentials"
-		for qr_source in share-reality share-hysteria2 share-anytls; do
+		for qr_source in $QR_SOURCES; do
 			if [ -f "$DELIVERY_DIR/$qr_source.txt" ]; then
 				qrencode -l M -t PNG -o "$DELIVERY_DIR/$qr_source.png" < "$DELIVERY_DIR/$qr_source.txt"
 				chown "$SERVICE_USER:$SERVICE_USER" "$DELIVERY_DIR/$qr_source.png"
@@ -1319,11 +1327,7 @@ if [ "$CONFIG_REPLACED" -eq 1 ]; then
 	[ "$CONFIG_DIR" = "/etc/mini-singbox" ] || fail "unsafe config path"
 	rm -rf "$CONFIG_DIR"
 	install -d -m 0700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR"
-	for generated_file in \
-		config.json client-info.json reality.key tls.key tls.crt \
-		client-anytls-sing-box-outbound.json \
-		share-reality.txt share-hysteria2.txt share-anytls.txt \
-		share-reality.png share-hysteria2.png share-anytls.png; do
+	for generated_file in config.json reality.key tls.key tls.crt $DELIVERY_FILES; do
 		if [ -f "$GENERATED_DIR/$generated_file" ]; then
 			case "$generated_file" in
 				tls.crt) mode=0644 ;;
@@ -1336,10 +1340,7 @@ if [ "$CONFIG_REPLACED" -eq 1 ]; then
 fi
 
 if [ "$DELIVERY_REPLACED" -eq 1 ]; then
-	for delivery_file in \
-		client-info.json client-anytls-sing-box-outbound.json \
-		share-reality.txt share-hysteria2.txt share-anytls.txt \
-		share-reality.png share-hysteria2.png share-anytls.png; do
+	for delivery_file in $DELIVERY_FILES; do
 		if [ -f "$DELIVERY_DIR/$delivery_file" ]; then
 			install -m 0600 -o "$SERVICE_USER" -g "$SERVICE_USER" \
 				"$DELIVERY_DIR/$delivery_file" "$CONFIG_DIR/$delivery_file"
@@ -1485,6 +1486,20 @@ case ",$LISTENER_PROTOCOLS," in
 			MISSING_DELIVERY=1
 			warn "missing authenticated AnyTLS sing-box outbound file"
 		fi
+		if [ ! -f "$CONFIG_DIR/client-anytls-mihomo.yaml" ] || \
+			[ -L "$CONFIG_DIR/client-anytls-mihomo.yaml" ]; then
+			MISSING_DELIVERY=1
+			warn "missing authenticated AnyTLS Mihomo proxy file"
+		fi
+		if [ -f "$CONFIG_DIR/share-anytls-v2rayn.txt" ] && \
+			[ ! -L "$CONFIG_DIR/share-anytls-v2rayn.txt" ] && \
+			[ -f "$CONFIG_DIR/share-anytls-v2rayn.png" ] && \
+			[ ! -L "$CONFIG_DIR/share-anytls-v2rayn.png" ]; then
+			HAS_SHARE_LINKS=1
+		else
+			MISSING_DELIVERY=1
+			warn "missing authenticated AnyTLS v2rayN link or QR image"
+		fi
 		if [ "$ALLOW_INSECURE_ANYTLS_SHARE" -eq 1 ]; then
 			if [ -f "$CONFIG_DIR/share-anytls.txt" ] && [ ! -L "$CONFIG_DIR/share-anytls.txt" ] && \
 				[ -f "$CONFIG_DIR/share-anytls.png" ] && [ ! -L "$CONFIG_DIR/share-anytls.png" ]; then
@@ -1550,12 +1565,12 @@ printf 'uninstall:     sudo mini-singbox-uninstall\n'
 if [ "$HAS_SHARE_LINKS" -eq 1 ]; then
 	printf 'share links:   %s/share-*.txt (sensitive)\n' "$CONFIG_DIR"
 	printf 'QR images:     %s/share-*.png (sensitive)\n' "$CONFIG_DIR"
-	for qr_source in share-reality share-hysteria2 share-anytls; do
+	for qr_source in $QR_SOURCES; do
 		if [ -f "$CONFIG_DIR/$qr_source.txt" ]; then
 			case "$qr_source" in
 				share-reality) qr_protocol=reality ;;
 				share-hysteria2) qr_protocol=hy2 ;;
-				share-anytls) qr_protocol=anytls ;;
+				share-anytls-v2rayn|share-anytls) qr_protocol=anytls ;;
 			esac
 			printf 'terminal QR:   sudo mini-singboxctl qr %s\n' "$qr_protocol"
 			break
@@ -1565,7 +1580,9 @@ else
 	warn "no QR-compatible share links are available for the enabled protocols"
 fi
 if [ -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ]; then
-	printf 'AnyTLS client: %s/client-anytls-sing-box-outbound.json (authenticated sing-box outbound; sensitive)\n' "$CONFIG_DIR"
+	printf 'AnyTLS export: sudo mini-singboxctl export anytls sing-box\n'
+	printf 'AnyTLS export: sudo mini-singboxctl export anytls mihomo\n'
+	printf 'AnyTLS export: sudo mini-singboxctl export anytls v2rayn\n'
 fi
 if [ -f "$CONFIG_DIR/deployment-info.txt" ]; then
 	printf 'deployment:    %s/deployment-info.txt\n' "$CONFIG_DIR"

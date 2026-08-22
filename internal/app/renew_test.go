@@ -38,7 +38,7 @@ func TestRenewCertificatePreservesCredentialsAndStagesAuthenticatedDelivery(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(renewed.Files) != 6 {
+	if len(renewed.Files) != 8 {
 		t.Fatalf("renewed files = %v", renewed.Files)
 	}
 	configAfter, err := os.ReadFile(configPath)
@@ -73,6 +73,8 @@ func TestRenewCertificatePreservesCredentialsAndStagesAuthenticatedDelivery(t *t
 		t.Fatalf("renewal generated unsafe AnyTLS URI by default: %s", updated.AnyTLS.ShareURI)
 	}
 	assertAuthenticatedAnyTLSOutbound(t, filepath.Join(stagingDirectory, updated.AnyTLS.SingBoxOutboundFile))
+	assertAuthenticatedAnyTLSMihomo(t, filepath.Join(stagingDirectory, updated.AnyTLS.MihomoProxyFile), updated.AnyTLS.CertSHA, updated.PublicAddress, updated.AnyTLS.Port, updated.AnyTLS.Password, updated.AnyTLS.TLSSAN)
+	assertAuthenticatedAnyTLSV2RayN(t, filepath.Join(stagingDirectory, updated.AnyTLS.V2RayNShareFile), updated.PublicAddress, updated.AnyTLS.Port, updated.AnyTLS.Password, updated.AnyTLS.TLSSAN)
 	for _, name := range []string{"config.json", "reality.key"} {
 		if _, err := os.Stat(filepath.Join(stagingDirectory, name)); !os.IsNotExist(err) {
 			t.Fatalf("renewal staging unexpectedly contains %s", name)

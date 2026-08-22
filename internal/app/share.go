@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -40,7 +41,7 @@ func certificateFingerprintSHA256(certificatePEM []byte) (string, error) {
 
 func buildDeliveryFiles(client *clientInfo, allowInsecureAnyTLSShare bool) ([]secret.File, error) {
 	address := client.PublicAddress
-	files := make([]secret.File, 0, 3)
+	files := make([]secret.File, 0, 5)
 	if client.VLESSReality != nil {
 		query := url.Values{
 			"encryption": {"none"},
@@ -71,6 +72,9 @@ func buildDeliveryFiles(client *clientInfo, allowInsecureAnyTLSShare bool) ([]se
 		files = append(files, shareFile("share-hysteria2.txt", client.Hysteria2.ShareURI))
 	}
 	if client.AnyTLS != nil {
+		if client.AnyTLS.CertificatePEM == "" {
+			return nil, fmt.Errorf("cannot build authenticated AnyTLS client delivery without the server certificate")
+		}
 		client.AnyTLS.SingBoxOutboundFile = "client-anytls-sing-box-outbound.json"
 		outbound, err := json.MarshalIndent(struct {
 			Type       string `json:"type"`
@@ -95,13 +99,30 @@ func buildDeliveryFiles(client *clientInfo, allowInsecureAnyTLSShare bool) ([]se
 		if err != nil {
 			return nil, fmt.Errorf("marshal AnyTLS sing-box outbound: %w", err)
 		}
-		if client.AnyTLS.CertificatePEM == "" {
-			return nil, fmt.Errorf("cannot build authenticated AnyTLS client config without the server certificate")
-		}
 		outbound = append(outbound, '\n')
 		files = append(files, secret.File{
 			Name: client.AnyTLS.SingBoxOutboundFile, Data: outbound, Mode: 0o600,
 		})
+
+		client.AnyTLS.MihomoProxyFile = "client-anytls-mihomo.yaml"
+		mihomo := fmt.Sprintf(
+			"proxies:\n  - name: %s\n    type: anytls\n    server: %s\n    port: %d\n    password: %s\n    sni: %s\n    udp: true\n    client-fingerprint: chrome\n    skip-cert-verify: true\n    fingerprint: %s\n",
+			yamlString("mini-singbox AnyTLS"), yamlString(address), client.AnyTLS.Port,
+			yamlString(client.AnyTLS.Password), yamlString(client.AnyTLS.TLSSAN),
+			yamlString(client.AnyTLS.CertSHA),
+		)
+		files = append(files, secret.File{
+			Name: client.AnyTLS.MihomoProxyFile, Data: []byte(mihomo), Mode: 0o600,
+		})
+
+		client.AnyTLS.V2RayNShareFile = "share-anytls-v2rayn.txt"
+		v2rayNURI, err := buildV2RayNAnyTLSURI(address, client.AnyTLS)
+		if err != nil {
+			return nil, err
+		}
+		client.AnyTLS.V2RayNShareURI = v2rayNURI
+		files = append(files, shareFile(client.AnyTLS.V2RayNShareFile, v2rayNURI))
+
 		if allowInsecureAnyTLSShare {
 			query := url.Values{
 				"insecure": {"1"},
@@ -118,6 +139,38 @@ func buildDeliveryFiles(client *clientInfo, allowInsecureAnyTLSShare bool) ([]se
 		return nil, fmt.Errorf("cannot build sharing files without an enabled protocol")
 	}
 	return files, nil
+}
+
+func yamlString(value string) string {
+	return strconv.Quote(value)
+}
+
+func buildV2RayNAnyTLSURI(address string, client *passwordClientInfo) (string, error) {
+	payload, err := json.Marshal(struct {
+		ConfigType     int    `json:"ConfigType"`
+		CoreType       int    `json:"CoreType"`
+		ConfigVersion  int    `json:"ConfigVersion"`
+		Remarks        string `json:"Remarks"`
+		Address        string `json:"Address"`
+		Port           int    `json:"Port"`
+		Password       string `json:"Password"`
+		Network        string `json:"Network"`
+		StreamSecurity string `json:"StreamSecurity"`
+		AllowInsecure  string `json:"AllowInsecure"`
+		SNI            string `json:"Sni"`
+		Fingerprint    string `json:"Fingerprint"`
+		Certificate    string `json:"Cert"`
+	}{
+		ConfigType: 11, CoreType: 24, ConfigVersion: 4,
+		Remarks: "mini-singbox AnyTLS", Address: address, Port: client.Port,
+		Password: client.Password, Network: "", StreamSecurity: "tls",
+		AllowInsecure: "false", SNI: client.TLSSAN, Fingerprint: "chrome",
+		Certificate: client.CertificatePEM,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal AnyTLS v2rayN profile: %w", err)
+	}
+	return "v2rayn://anytls/" + base64.RawURLEncoding.EncodeToString(payload), nil
 }
 
 func applyPublicPorts(client *clientInfo, realityPort, hysteria2Port, anyTLSPort int) error {

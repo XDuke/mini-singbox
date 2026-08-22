@@ -3,7 +3,7 @@
 All notable changes to `mini-singbox` are recorded here. The project follows
 Semantic Versioning.
 
-## v1.2.0 - 2026-08-21
+## v1.2.0 - Unreleased
 
 ### Added
 
@@ -22,6 +22,11 @@ Semantic Versioning.
 - Added public-port provenance to deployment records and status output so
   container/shared-NAT installs distinguish explicit mappings from assumed
   listen-equals-public ports.
+- Added authenticated AnyTLS exports for sing-box, Mihomo, and v2rayN. The
+  v2rayN-specific link and QR embed the server certificate; the Mihomo export
+  pins the complete leaf-certificate SHA-256 fingerprint.
+- Added `export anytls <sing-box|mihomo|v2rayn>` to host and rootless-container
+  control tools.
 
 ### Changed
 
@@ -37,8 +42,11 @@ Semantic Versioning.
   the target. A narrow verified legacy fallback remains for v1.1.1.
 - Generalized deployment, status, logs, certificate renewal, rollback, update,
   and uninstall transactions across systemd, OpenRC, and external runtimes.
-- AnyTLS delivery commands now report the enabled protocol and authenticated
-  outbound path even when the secure default intentionally omits a generic QR.
+- `qr anytls` and `qr all` now render the authenticated v2rayN-specific QR,
+  print its sensitive link underneath, and identify the sing-box and Mihomo
+  alternatives without presenting the QR as Clash-compatible.
+- Deployment, delivery refresh, certificate renewal, rollback, and post-install
+  validation now manage all authenticated AnyTLS client artifacts together.
 - OpenRC service output now uses a bounded root-owned private local log instead
   of an unverified syslog socket; only the service group can write it, and the
   control tool reads it without following symbolic links.
@@ -54,6 +62,9 @@ Semantic Versioning.
 - OpenRC uses a root-owned PID file, `no_new_privs`, restrictive umask, and an
   unprivileged service user. OCI runtime defaults remain read-only, capability
   free, `no-new-privileges`, 64-PID and 128-MiB bounded.
+- Standard `anytls://` remains disabled by default because it cannot carry the
+  self-signed certificate trust material. All new default AnyTLS artifacts are
+  private (`0600`) and reject symbolic-link substitution during export.
 
 ## v1.1.1 - 2026-08-16
 

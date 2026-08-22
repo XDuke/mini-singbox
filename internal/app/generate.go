@@ -60,6 +60,9 @@ type passwordClientInfo struct {
 	TLSSAN              string `json:"tls_san"`
 	CertSHA             string `json:"certificate_sha256,omitempty"`
 	SingBoxOutboundFile string `json:"sing_box_outbound_file,omitempty"`
+	MihomoProxyFile     string `json:"mihomo_proxy_file,omitempty"`
+	V2RayNShareFile     string `json:"v2rayn_share_file,omitempty"`
+	V2RayNShareURI      string `json:"v2rayn_share_uri,omitempty"`
 	ShareURI            string `json:"share_uri,omitempty"`
 	CertificatePEM      string `json:"-"`
 }

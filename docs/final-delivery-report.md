@@ -41,7 +41,9 @@ supports shared NAT, uses a dedicated non-root user, observes startup/listeners,
 and retains a guarded rollback backup. OpenRC writes service output to a bounded
 root-owned private local log without requiring syslog. `mini-singboxctl` provides
 on-demand status, certificate, logs, version and explicit credential QR/link
-display.
+display. AnyTLS delivery is client-specific: authenticated sing-box JSON,
+certificate-fingerprint-pinned Mihomo YAML, and a certificate-carrying v2rayN
+internal link/QR. Deployment, renewal and rollback move them as one set.
 
 ## Remaining limitations
 

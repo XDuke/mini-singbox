@@ -42,7 +42,8 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 这里的数字只是命令格式示例。使用控制台当前显示的端口，不要照抄。脚本会让服务
 继续监听正确的内部端口：Reality `20001/tcp`、Hysteria2
 `20002/udp`、AnyTLS `20003/tcp`，并把公网端口写入客户端交付文件。Reality 和
-Hysteria2 生成二维码；AnyTLS 默认生成内嵌服务器证书的认证出站配置。
+Hysteria2 生成通用二维码；AnyTLS 生成 v2rayN 专用二维码、内嵌服务器证书的 sing-box
+出站 JSON，以及固定服务器证书 SHA-256 的 Mihomo YAML。
 
 ## NAT 端口变化后刷新客户端交付
 
@@ -57,8 +58,8 @@ sudo env \
   bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
-这条路径只重建 `client-info.json`、可用的 `share-*.txt`/`share-*.png` 和 AnyTLS
-认证出站配置。现有 UUID、密码、Reality 密钥、TLS 私钥和服务端配置保持不变。
+这条路径只重建 `client-info.json`、可用的 `share-*.txt`/`share-*.png` 和三种 AnyTLS
+认证交付。现有 UUID、密码、Reality 密钥、TLS 私钥和服务端配置保持不变。
 部署前仍会创建备份，失败会回滚。
 
 以后普通升级会沿用 `client-info.json` 中已经记录的公网地址和端口，无需重复填写。
@@ -71,11 +72,11 @@ sudo env \
 2. `sudo cat /etc/mini-singbox/deployment-info.txt`：确认每个协议的
    `*_listen_port` 与 `*_public_port` 对应正确，并确认 `*_public_port_source=explicit`。
 3. 从实例外部探测 Reality/AnyTLS 的两个 TCP 公网端口。
-4. 使用真实客户端导入 Reality、Hysteria2 二维码以及 AnyTLS 认证出站配置并分别建立
+4. 使用真实客户端导入 Reality、Hysteria2 二维码以及对应客户端的 AnyTLS 认证交付并分别建立
    连接；Hysteria2 必须用真实 QUIC/UDP 客户端验证，不能只依赖 TCP 端口测试。
 5. 连接同时查看 `sudo mini-singboxctl logs 100`。客户端报错但服务日志完全没有新
    连接时，优先检查面板映射、协议类型和公网端口，而不是重置凭据。
 
-二维码、分享链接和 AnyTLS 出站配置包含完整客户端凭据。不要上传到 Issue、CI
+二维码、分享链接和 AnyTLS 导出包含完整客户端凭据。不要上传到 Issue、CI
 Artifact、公开聊天或截图文档。控制台套餐到期、流量额度、续费和删除实例属于
 服务商资源操作，本项目的部署脚本不会自动处理。

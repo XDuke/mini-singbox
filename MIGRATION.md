@@ -42,6 +42,23 @@ installer: all three paths share the current signed assets, strict config,
 transactional credentials, control commands, architecture checks, and release
 identity.
 
+`v1.2.0` also replaces the single AnyTLS delivery with three authenticated
+client choices. Re-running the installer rebuilds delivery files without
+rotating the server password or certificate:
+
+```text
+/etc/mini-singbox/client-anytls-sing-box-outbound.json
+/etc/mini-singbox/client-anytls-mihomo.yaml
+/etc/mini-singbox/share-anytls-v2rayn.txt
+/etc/mini-singbox/share-anytls-v2rayn.png
+```
+
+Use `sudo mini-singboxctl qr anytls` for v2rayN, or
+`sudo mini-singboxctl export anytls sing-box|mihomo|v2rayn` for an explicit
+format. The v2rayN QR is not compatible with Clash/Mihomo; original Clash does
+not support AnyTLS. Delete any previously copied unauthenticated standard
+`anytls://` profile after importing one of the authenticated replacements.
+
 The selected host runtime is written as `runtime=systemd`, `runtime=openrc`, or
 `runtime=external` in `deployment-info.txt`. Ordinary upgrades refuse to change
 that value implicitly. To move between init systems, stop and disable the old
@@ -65,8 +82,8 @@ Do not copy panel, multi-user, subscription, traffic-accounting, arbitrary
 sing-box, TUN, route, outbound, DNS, endpoint, or service configuration into
 this project. The strict schema intentionally rejects them.
 
-For a clean installation, deploy `v1.2.0`, import the Reality and Hysteria2 QR
-codes, and merge the authenticated AnyTLS outbound into the sing-box client.
+For a clean installation after the formal `v1.2.0` release, import the Reality
+and Hysteria2 QR codes, then select the AnyTLS export matching the client.
 For an early pre-v1 candidate, keep a private backup, stop its service, and copy
 only the candidate's local `config.json`, Reality private key, TLS key, and TLS
 certificate into `/etc/mini-singbox` with the new service-user ownership. Run

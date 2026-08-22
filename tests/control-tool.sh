@@ -168,41 +168,51 @@ run_control qr all > "$WORK_DIRECTORY/qr-all.txt"
 [ "$(grep -Fc 'link (sensitive): ' "$WORK_DIRECTORY/qr-all.txt")" -eq 3 ]
 grep -Fq "link (sensitive): $(cat "$CONFIG_DIRECTORY/share-reality.txt")" "$WORK_DIRECTORY/qr-all.txt"
 grep -Fq "link (sensitive): $(cat "$CONFIG_DIRECTORY/share-hysteria2.txt")" "$WORK_DIRECTORY/qr-all.txt"
-grep -Fq "link (sensitive): $(cat "$CONFIG_DIRECTORY/share-anytls.txt")" "$WORK_DIRECTORY/qr-all.txt"
+grep -Fq "link (sensitive): $(cat "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt")" "$WORK_DIRECTORY/qr-all.txt"
+grep -Fq 'anytls (v2rayN only)' "$WORK_DIRECTORY/qr-all.txt"
+grep -Fq "Mihomo export:  $CONFIG_DIRECTORY/client-anytls-mihomo.yaml" "$WORK_DIRECTORY/qr-all.txt"
 
-cp "$CONFIG_DIRECTORY/share-anytls.txt" "$CONFIG_DIRECTORY/share-anytls.txt.valid"
-printf 'anytls://example.invalid\nsecond-line\n' > "$CONFIG_DIRECTORY/share-anytls.txt"
+cp "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt" "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt.valid"
+printf 'v2rayn://anytls/example\nsecond-line\n' > "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt"
 if run_control qr anytls >/dev/null 2>&1; then
 	echo 'qr accepted a multi-line share link' >&2
 	exit 1
 fi
-printf 'vless://example.invalid\n' > "$CONFIG_DIRECTORY/share-anytls.txt"
+printf 'anytls://example.invalid\n' > "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt"
 if run_control qr anytls >/dev/null 2>&1; then
 	echo 'qr accepted a share link with the wrong protocol scheme' >&2
 	exit 1
 fi
-mv "$CONFIG_DIRECTORY/share-anytls.txt.valid" "$CONFIG_DIRECTORY/share-anytls.txt"
+mv "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt.valid" "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt"
 
-mv "$CONFIG_DIRECTORY/share-anytls.txt" "$CONFIG_DIRECTORY/share-anytls.txt.missing"
+mv "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt" "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt.missing"
 if run_control qr all >/dev/null 2>&1; then
 	echo 'qr all ignored a missing enabled-protocol share link' >&2
 	exit 1
 fi
-mv "$CONFIG_DIRECTORY/share-anytls.txt.missing" "$CONFIG_DIRECTORY/share-anytls.txt"
+mv "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt.missing" "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt"
 
-cp "$CONFIG_DIRECTORY/client-info.json" "$CONFIG_DIRECTORY/client-info.json.insecure"
-mv "$CONFIG_DIRECTORY/share-anytls.txt" "$CONFIG_DIRECTORY/share-anytls.txt.insecure"
-jq 'del(.anytls.share_uri)' "$CONFIG_DIRECTORY/client-info.json.insecure" > "$CONFIG_DIRECTORY/client-info.json"
 run_control qr anytls > "$WORK_DIRECTORY/qr-anytls-secure.txt"
-grep -Fq 'enabled: yes' "$WORK_DIRECTORY/qr-anytls-secure.txt"
-grep -Fq "authenticated config (sensitive): $CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" "$WORK_DIRECTORY/qr-anytls-secure.txt"
-grep -Fq 'QR: not generated because the standard URI cannot authenticate a self-signed certificate.' "$WORK_DIRECTORY/qr-anytls-secure.txt"
-[ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-anytls-secure.txt")" -eq 0 ]
-run_control qr all > "$WORK_DIRECTORY/qr-all-secure-anytls.txt"
-[ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-all-secure-anytls.txt")" -eq 2 ]
-grep -Fq 'authenticated config (sensitive):' "$WORK_DIRECTORY/qr-all-secure-anytls.txt"
-mv "$CONFIG_DIRECTORY/client-info.json.insecure" "$CONFIG_DIRECTORY/client-info.json"
-mv "$CONFIG_DIRECTORY/share-anytls.txt.insecure" "$CONFIG_DIRECTORY/share-anytls.txt"
+grep -Fq 'anytls (v2rayN only)' "$WORK_DIRECTORY/qr-anytls-secure.txt"
+[ "$(grep -Fc '[mock QR rendered]' "$WORK_DIRECTORY/qr-anytls-secure.txt")" -eq 1 ]
+run_control export anytls sing-box > "$WORK_DIRECTORY/export-sing-box.json"
+cmp "$CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" "$WORK_DIRECTORY/export-sing-box.json"
+run_control export anytls mihomo > "$WORK_DIRECTORY/export-mihomo.yaml"
+cmp "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml" "$WORK_DIRECTORY/export-mihomo.yaml"
+run_control export anytls v2rayn > "$WORK_DIRECTORY/export-v2rayn.txt"
+cmp "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt" "$WORK_DIRECTORY/export-v2rayn.txt"
+mv "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml" "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml.real"
+ln -s "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml.real" "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml"
+if run_control export anytls mihomo >/dev/null 2>&1; then
+	echo 'export followed a symbolic link' >&2
+	exit 1
+fi
+rm "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml"
+mv "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml.real" "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml"
+if run_control export anytls invalid >/dev/null 2>&1; then
+	echo 'export accepted an invalid AnyTLS format' >&2
+	exit 1
+fi
 
 if run_control logs 0 >/dev/null 2>&1; then
 	echo 'logs accepted an invalid line count' >&2
@@ -239,6 +249,10 @@ if sudo cmp -s "$WORK_DIRECTORY/tls.before-renew.crt" "$CONFIG_DIRECTORY/tls.crt
 fi
 sudo jq -e '(.tls.certificate | type) == "array" and (.tls.certificate | length) == 1 and (.tls.certificate[0] | startswith("-----BEGIN CERTIFICATE-----"))' \
 	"$CONFIG_DIRECTORY/client-anytls-sing-box-outbound.json" >/dev/null
+sudo grep -Fq 'type: anytls' "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml"
+sudo grep -Fq 'skip-cert-verify: true' "$CONFIG_DIRECTORY/client-anytls-mihomo.yaml"
+sudo grep -Eq '^v2rayn://anytls/[A-Za-z0-9_-]+$' "$CONFIG_DIRECTORY/share-anytls-v2rayn.txt"
+sudo test -s "$CONFIG_DIRECTORY/share-anytls-v2rayn.png"
 sudo chown -R "$(id -u):$(id -g)" "$CONFIG_DIRECTORY"
 
 FAILING_SYSTEMCTL="$WORK_DIRECTORY/failing-systemctl"

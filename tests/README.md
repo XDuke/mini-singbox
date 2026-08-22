@@ -14,8 +14,9 @@ tests/control-tool.sh scripts/mini-singboxctl ./mini-singbox-linux-amd64
 
 This offline check generates a three-protocol IPv6 client configuration and
 verifies bracketed IPv6 share URIs plus the on-demand `check`, `version`,
-`certificate`, `status`, `logs`, offline tuning plan/dry-run, and QR paths with
-mocked init and socket state.
+`certificate`, `status`, `logs`, offline tuning plan/dry-run, QR paths, three
+authenticated AnyTLS exports, symbolic-link rejection, and certificate-renewal
+rebuilds with mocked init and socket state.
 
 ## No active egress
 

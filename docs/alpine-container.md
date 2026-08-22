@@ -147,6 +147,9 @@ mini-singbox-containerctl status
 mini-singbox-containerctl logs 100
 mini-singbox-containerctl check
 mini-singbox-containerctl qr all
+mini-singbox-containerctl export anytls sing-box
+mini-singbox-containerctl export anytls mihomo
+mini-singbox-containerctl export anytls v2rayn
 mini-singbox-containerctl certificate renew
 mini-singbox-containerctl upgrade IMAGE_AT_NEW_DIGEST
 mini-singbox-containerctl rollback
@@ -159,8 +162,9 @@ then observes the replacement. Failed startup restores the previous image ID.
 Certificate renewal stops the container, copies the complete configuration,
 generates new TLS material without network access, checks the result, and
 restores the old directory on failure. Credentials and Reality keys are not
-rotated. Hysteria2 and AnyTLS clients must be re-imported after a successful
-renewal because their certificate pins change.
+rotated. Hysteria2 and all three AnyTLS exports must be re-imported after a
+successful renewal because their certificate pins change. The AnyTLS QR is
+v2rayN-specific and is not a Clash/Mihomo QR.
 
 `uninstall` keeps configuration by default. `PURGE=1
 mini-singbox-containerctl uninstall` permanently removes the helper state and

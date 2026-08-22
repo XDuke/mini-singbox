@@ -7,9 +7,10 @@
 `mini-singbox` 是面向个人、小型 NAT VPS、LXC、Alpine Linux 和 128 MiB 容器的精简 sing-box
 服务端。它只保留 VLESS Reality、Hysteria2 和 AnyTLS，使用官方 sing-box
 内核，不包含面板、多用户、订阅服务、流量统计、管理 API、TUN、WireGuard、限速或
-自动更新守护进程。当前正式版 `v1.2.0` 内置官方 sing-box `v1.13.18`。
+自动更新守护进程。当前正式版是 `v1.1.1`；本分支为 `v1.2.0` 候选版，继续使用官方
+sing-box `v1.13.18`。
 
-## v1.2.0 正式版
+## v1.2.0 候选版
 
 这一轮在不增加常驻管理面板、不提高默认 128 MiB 资源上限的前提下，补齐 Alpine 与
 OCI 容器运行链，并保持小虚拟机只下载已构建二进制、不在目标机编译。
@@ -29,8 +30,10 @@ OCI 容器运行链，并保持小虚拟机只下载已构建二进制、不在�
   provenance，以及 Alpine 3.23/3.24、OpenRC 和 rootless Podman CI 验收。
 - 容器首次部署如果没有显式提供公网端口，会醒目标记端口只是“按内部端口假定”，并在
   `status` 中持续提示核对服务商 NAT 映射，避免监听正常却生成不可用的客户端配置；
-- `qr anytls` 与 `qr all` 现在始终显示 AnyTLS 已启用及认证配置文件路径；安全默认仍不
-  伪造无法携带自签证书信任信息的通用二维码。
+- AnyTLS 同时生成三种认证交付：sing-box 出站 JSON、Mihomo 代理 YAML，以及仅供当前
+  v2rayN 导入的内部格式链接/二维码；不再把 v2rayN 二维码误称为 Clash 通用二维码；
+- 新增 `export anytls <sing-box|mihomo|v2rayn>`，`qr anytls` 和 `qr all` 在二维码下方
+  显示协议链接及另外两种导出路径；证书续期会同步重建全部三种交付；
 - OpenRC 不再依赖容器里可能不存在的 syslog socket；服务输出写入 root 管理、仅服务组
   可追加的私有本地日志，启动时超过 1 MiB 会保留最近 512 KiB，`mini-singboxctl logs`
   可直接读取真实错误。
@@ -90,7 +93,7 @@ Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或�
   Reality 握手目标；
 - 支持共享 NAT 的公网端口与内部监听端口分离；
 - 自动生成 Reality、Hysteria2 分享链接和二维码，以及经过证书认证的 AnyTLS
-  sing-box 出站配置；
+  sing-box、Mihomo 和 v2rayN 客户端交付；
 - 只下载当前精确版本的 CI 静态二进制，不在小虚拟机编译；
 - 正式版本验证 minisign 签名、SHA-256、ELF 架构、静态链接、版本和 Git 提交；
 - 部署后离线检测内核、cgroup 有效内存和 TCP 能力，只应用可验证、可持久化、可回滚的
@@ -104,7 +107,7 @@ Hysteria2 客户端在普通升级时无需重新导入，只有主动续证或�
 |---|---:|---|---|
 | VLESS Reality | `20001/tcp` | TCP + Reality | `vless://`、二维码 |
 | Hysteria2 | `20002/udp` | QUIC/UDP + TLS 1.3 | `hysteria2://`、二维码 |
-| AnyTLS | `20003/tcp` | TCP + TLS 1.3 | 认证证书的 sing-box 出站配置 |
+| AnyTLS | `20003/tcp` | TCP + TLS 1.3 | sing-box JSON、Mihomo YAML、v2rayN 专用二维码 |
 
 Reality 与 AnyTLS 必须使用不同 TCP 端口；Hysteria2 必须映射 UDP。共享 NAT
 服务器可以使用任意不同的公网端口映射到以上内部端口。
@@ -139,10 +142,10 @@ SHA-256、ELF、版本和完整 Git 提交。目标虚拟机只下载静态二�
 `v1.1.1` 固定安装仍自动使用经验证的兼容路径。
 
 普通重跑会先备份并保留 UUID、密码、Reality 私钥和证书；只有显式设置
-`MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到某个正式版：
+`MINI_SINGBOX_REGENERATE=1` 才会轮换凭据。固定到当前正式版：
 
 ```bash
-MINI_SINGBOX_VERSION=v1.2.0 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
+MINI_SINGBOX_VERSION=v1.1.1 bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/mini-singbox/main/bootstrap.sh | bash'
 ```
 
 短命令的第一跳来自可变的 `main` 分支，适合日常安装和升级；正式负载仍来自精确、
@@ -158,9 +161,9 @@ bash bootstrap.sh
 完全固定、分步审阅方式：
 
 ```sh
-git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch v1.1.1 --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
-test "$(git cat-file -t refs/tags/v1.2.0)" = tag
+test "$(git cat-file -t refs/tags/v1.1.1)" = tag
 sudo ./scripts/deploy.sh
 ```
 
@@ -172,7 +175,7 @@ sudo ./scripts/deploy.sh
 4. 检查端口占用和协议端口冲突；
 5. 下载正式 Release 的静态二进制；
 6. 验证 minisign、SHA-256、ELF 架构、静态链接、版本和完整提交；
-7. 生成安全凭据、证书、Reality/Hysteria2 二维码和认证证书的 AnyTLS 客户端配置；
+7. 生成安全凭据、证书、Reality/Hysteria2 二维码和三种认证证书的 AnyTLS 客户端交付；
 8. 安装非 root 服务并检查配置、进程身份、监听端口和启动状态；external 模式只准备
    前台入口，明确交给外层 supervisor 启动；
 9. 仅在真正拥有宿主内核的 systemd/OpenRC 环境，为 Reality/AnyTLS 自动执行保守的
@@ -206,7 +209,7 @@ bash -c 'set -o pipefail; curl -fsSL https://raw.githubusercontent.com/XDuke/min
 | 目的 | 一行部署命令前缀 |
 |---|---|
 | 保留配置升级/重装 | 无，直接重跑 |
-| 固定项目版本 | `MINI_SINGBOX_VERSION=v1.2.0` |
+| 固定当前正式版 | `MINI_SINGBOX_VERSION=v1.1.1` |
 | 重新生成全部凭据 | `MINI_SINGBOX_REGENERATE=1` |
 | 只刷新公网地址、端口和二维码 | `MINI_SINGBOX_REFRESH_DELIVERY=1`，并提供新的公网值 |
 | 强制使用 IPv4 | `MINI_SINGBOX_IP_FAMILY=4` |
@@ -227,8 +230,8 @@ MINI_SINGBOX_REGENERATE=1 bash -c 'set -o pipefail; curl -fsSL https://raw.githu
 普通升级不会轮换 UUID、密码或私钥。只有 `MINI_SINGBOX_REGENERATE=1` 会使旧客户端
 配置失效。修改 NAT 公网端口时使用 `MINI_SINGBOX_REFRESH_DELIVERY=1`。
 
-AnyTLS 通用 URI 没有跨客户端统一的自签证书 pin 字段，因此默认二维码会被安全地
-跳过；`qr anytls`/`qr all` 仍会明确显示协议已启用、认证配置文件路径和导入方法。
+AnyTLS 通用 URI 没有跨客户端统一的自签证书 pin 字段，因此默认改用带认证材料的
+v2rayN 专用二维码；sing-box 和 Mihomo 使用各自的导出文件，不共用该二维码。
 `MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` 生成的链接带有 `insecure=1`，只能用于
 明确接受中间人风险的临时兼容测试，不是推荐配置。
 
@@ -351,8 +354,11 @@ mini-singbox-containerctl uninstall
 | `sudo mini-singboxctl certificate renew` | 只续 TLS 证书并重建 pin 交付；失败自动恢复旧配置 |
 | `sudo mini-singboxctl qr reality` | Reality 二维码及其协议链接 |
 | `sudo mini-singboxctl qr hy2` | Hysteria2 二维码及其协议链接 |
-| `sudo mini-singboxctl qr anytls` | 显示 AnyTLS 已启用、认证配置路径和导入方法；危险兼容开关开启后才显示二维码 |
-| `sudo mini-singboxctl qr all` | 依次显示所有启用协议；Reality/HY2 显示二维码和链接，AnyTLS 安全默认显示认证配置 |
+| `sudo mini-singboxctl qr anytls` | v2rayN 专用 AnyTLS 二维码、链接及其他认证导出路径 |
+| `sudo mini-singboxctl qr all` | 依次显示三个协议的二维码并在每个二维码下附协议链接 |
+| `sudo mini-singboxctl export anytls sing-box` | 输出内嵌服务器证书的 sing-box AnyTLS 出站 JSON |
+| `sudo mini-singboxctl export anytls mihomo` | 输出带服务器证书 SHA-256 固定的 Mihomo AnyTLS YAML |
+| `sudo mini-singboxctl export anytls v2rayn` | 输出可复制或扫码导入 v2rayN 的内部格式链接 |
 | `sudo mini-singboxctl logs 100` | 最近 100 行服务状态和日志 |
 | `sudo mini-singboxctl tune detect` | 只检测环境、有效 RAM、工作负载和系统能力 |
 | `sudo mini-singboxctl tune plan` | 生成逐项 TCP 调优计划，不修改系统 |
@@ -363,10 +369,15 @@ mini-singbox-containerctl uninstall
 | `sudo mini-singboxctl tune rollback` | 精确恢复应用前原值并移除本项目持久化文件 |
 | `sudo mini-singboxctl version` | 二进制版本和构建身份 |
 
-二维码、其下方链接和 AnyTLS 出站配置都包含完整客户端凭据，不要截图或复制到公开
-聊天、Issue 或日志。AnyTLS 推荐把
-`/etc/mini-singbox/client-anytls-sing-box-outbound.json` 合并到客户端 `outbounds`；文件
-内嵌服务器证书并保持证书验证开启。
+二维码、其下方链接和 AnyTLS 导出都包含完整客户端凭据，不要截图或复制到公开聊天、
+Issue 或日志。sing-box 用户把导出的 JSON 对象合并到客户端 `outbounds`；Mihomo/Clash
+Meta 用户把 YAML 中的代理对象合并到 `proxies`。v2rayN 用户可复制链接或扫码导入。
+原版 Clash 不支持 AnyTLS，也不能识别 v2rayN 内部二维码。
+
+三种默认交付都对当前自签名证书做认证：sing-box 和 v2rayN 内嵌服务器证书并保持
+`insecure=false`；Mihomo 允许自签名证书通过系统 CA 检查之外的路径，但继续固定完整
+服务器证书的 SHA-256 指纹。标准 `anytls://` 不能携带这些认证材料，仅在显式设置
+`MINI_SINGBOX_ALLOW_INSECURE_ANYTLS_SHARE=1` 时作为不安全兼容项生成。
 
 自签名证书有效期为 365 天。续证命令不会改变 UUID、协议密码或 Reality 密钥；它先在
 临时目录生成并校验完整交付文件，备份当前配置，停服切换并确认服务稳定，失败则恢复。
@@ -429,12 +440,15 @@ sudo mini-singboxctl tune plan --bw 500 --rtt 80
 | `/etc/mini-singbox/config.json` | `0600` | 严格服务端配置 |
 | `/etc/mini-singbox/client-info.json` | `0600` | 客户端信息和分享 URI |
 | `/etc/mini-singbox/client-anytls-sing-box-outbound.json` | `0600` | 内嵌服务器证书的 AnyTLS sing-box 出站配置 |
+| `/etc/mini-singbox/client-anytls-mihomo.yaml` | `0600` | 固定服务器证书 SHA-256 的 Mihomo AnyTLS 代理配置 |
+| `/etc/mini-singbox/share-anytls-v2rayn.txt` | `0600` | 内嵌服务器证书的 v2rayN 专用 AnyTLS 分享链接 |
+| `/etc/mini-singbox/share-anytls-v2rayn.png` | `0600` | 上述 v2rayN 专用链接的二维码 |
 | `/etc/mini-singbox/deployment-info.txt` | `0600` | 非凭据部署摘要 |
 | `/etc/mini-singbox/reality.key` | `0600` | Reality 私钥 |
 | `/etc/mini-singbox/tls.key` | `0600` | TLS 私钥 |
 | `/etc/mini-singbox/tls.crt` | `0644` | 365 天自签名证书 |
-| `/etc/mini-singbox/share-*.txt` | `0600` | Reality/Hysteria2 分享链接；AnyTLS 仅危险兼容模式生成 |
-| `/etc/mini-singbox/share-*.png` | `0600` | Reality/Hysteria2 二维码；AnyTLS 仅危险兼容模式生成 |
+| `/etc/mini-singbox/share-*.txt` | `0600` | Reality/Hysteria2 与 v2rayN 专用 AnyTLS 链接；标准 AnyTLS 仅危险兼容模式生成 |
+| `/etc/mini-singbox/share-*.png` | `0600` | 对应二维码；标准 AnyTLS 二维码仅危险兼容模式生成 |
 | `/var/lib/mini-singbox/tune/` | `0700` | root 专属调优基线、活动状态和历史回滚记录 |
 | `/var/log/mini-singbox/service.log` | `0620` | OpenRC stdout/stderr；root 所有、仅服务组可写，可能包含连接元数据 |
 | `/etc/sysctl.d/90-mini-singbox-tune.conf` | `0644` | 仅含本项目实际拥有的 TCP sysctl |
@@ -489,7 +503,7 @@ TasksMax=64
 需要复现容器硬化检查的开发机可以执行：
 
 ```sh
-git clone --branch v1.2.0 --depth 1 https://github.com/XDuke/mini-singbox.git
+git clone --branch develop/v1.2.0-alpine --depth 1 https://github.com/XDuke/mini-singbox.git
 cd mini-singbox
 mkdir config
 sudo chown 65532:65532 config

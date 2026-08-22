@@ -19,6 +19,10 @@ RC_SERVICE="${MINI_SINGBOX_RC_SERVICE:-rc-service}"
 LOGREAD="${MINI_SINGBOX_LOGREAD:-logread}"
 OPENRC_LOG_PATH="${MINI_SINGBOX_OPENRC_LOG_PATH:-/var/log/mini-singbox/service.log}"
 EXTERNAL_PID_FILE="${MINI_SINGBOX_EXTERNAL_PID_FILE:-/run/mini-singbox/mini-singbox.pid}"
+QR_SOURCES="share-reality share-hysteria2 share-anytls-v2rayn share-anytls"
+RENEWAL_FILES="tls.crt tls.key client-info.json client-anytls-sing-box-outbound.json client-anytls-mihomo.yaml
+share-reality.txt share-hysteria2.txt share-anytls-v2rayn.txt share-anytls.txt
+share-reality.png share-hysteria2.png share-anytls-v2rayn.png share-anytls.png"
 
 fail() {
 	printf 'mini-singboxctl: %s\n' "$*" >&2
@@ -55,7 +59,7 @@ renew_cleanup() {
 
 usage() {
 	cat <<'EOF'
-usage: mini-singboxctl <status|check|certificate|qr|logs|tune|version> [options]
+usage: mini-singboxctl <status|check|certificate|qr|export|logs|tune|version> [options]
 
 commands:
   status                   validate config, service, listeners, memory, and TLS expiry
@@ -63,7 +67,9 @@ commands:
   certificate              show TLS certificate expiry and fail inside 30 days
   certificate renew        rotate only the TLS certificate/key with guarded rollback
   qr [reality|hy2|anytls|all]
-                           show protocol delivery; secure AnyTLS uses an outbound file
+                           show protocol delivery; AnyTLS QR is v2rayN-specific
+  export anytls <sing-box|mihomo|v2rayn>
+                           print one authenticated AnyTLS client export
   logs [LINES]             show 1-1000 recent service log lines (default 100)
   tune <detect|plan|apply|verify|status|rollback> [options]
                            inspect or manage conservative, reversible TCP tuning
@@ -276,7 +282,7 @@ renew_certificate() {
 		--hy2-port "$hy2_port" \
 		--anytls-port "$anytls_port" \
 		--allow-insecure-anytls-share="$allow_insecure_anytls" >/dev/null
-	for qr_source in share-reality share-hysteria2 share-anytls; do
+	for qr_source in $QR_SOURCES; do
 		if [ -f "$generated/$qr_source.txt" ]; then
 			"$QRENCODE" -l M -t PNG -o "$generated/$qr_source.png" < "$generated/$qr_source.txt"
 			chown "$SERVICE_USER:$SERVICE_GROUP" "$generated/$qr_source.png"
@@ -291,10 +297,7 @@ renew_certificate() {
 	cp -a "$CONFIG_DIR" "$RENEW_BACKUP"
 	RENEW_SWITCHED=1
 	runtime_stop "$RENEW_RUNTIME"
-	for renewal_file in \
-		tls.crt tls.key client-info.json client-anytls-sing-box-outbound.json \
-		share-reality.txt share-hysteria2.txt share-anytls.txt \
-		share-reality.png share-hysteria2.png share-anytls.png; do
+	for renewal_file in $RENEWAL_FILES; do
 		if [ -f "$generated/$renewal_file" ] && [ ! -L "$generated/$renewal_file" ]; then
 			case "$renewal_file" in
 				tls.crt) mode=0644 ;;
@@ -435,7 +438,7 @@ show_qr() {
 	for mapping in \
 		reality:vless_reality:share-reality \
 		hy2:hysteria2:share-hysteria2 \
-		anytls:anytls:share-anytls; do
+		anytls:anytls:share-anytls-v2rayn; do
 		name="${mapping%%:*}"
 		remainder="${mapping#*:}"
 		config_key="${remainder%%:*}"
@@ -463,33 +466,44 @@ show_qr() {
 				fail "share link contains control characters: $path"
 			fi
 			case "$name:$share_link" in
-				reality:vless://*|hy2:hysteria2://*|anytls:anytls://*) ;;
+				reality:vless://*|hy2:hysteria2://*|anytls:v2rayn://anytls/*) ;;
 				*) fail "share link scheme does not match enabled protocol $name: $path" ;;
 			esac
-			printf '\n%s\n' "$name"
+			if [ "$name" = anytls ]; then
+				printf '\nanytls (v2rayN only)\n'
+			else
+				printf '\n%s\n' "$name"
+			fi
 			printf '%s\n' "$share_link" | "$QRENCODE" -t ANSIUTF8
 			printf 'link (sensitive): %s\n' "$share_link"
+			if [ "$name" = anytls ]; then
+				printf 'sing-box export: %s/client-anytls-sing-box-outbound.json\n' "$CONFIG_DIR"
+				printf 'Mihomo export:  %s/client-anytls-mihomo.yaml\n' "$CONFIG_DIR"
+				printf 'other clients: use an export file; v2rayN links are not Clash/Mihomo compatible.\n'
+			fi
 			found=1
 		else
-			if [ "$name" = "anytls" ] && \
-				[ -f "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ] && \
-				[ ! -L "$CONFIG_DIR/client-anytls-sing-box-outbound.json" ]; then
-				if "$JQ" -e '(.anytls.share_uri // "") | startswith("anytls://")' \
-					"$CLIENT_INFO_PATH" >/dev/null 2>&1; then
-					fail "explicitly enabled AnyTLS share link is missing or unsafe: $path"
-				fi
-				printf '\nanytls\n'
-				printf 'enabled: yes\n'
-				printf 'QR: not generated because the standard URI cannot authenticate a self-signed certificate.\n'
-				printf 'authenticated config (sensitive): %s/client-anytls-sing-box-outbound.json\n' "$CONFIG_DIR"
-				printf 'import: merge this JSON object into the sing-box client outbounds list.\n'
-				found=1
-				continue
-			fi
 			fail "share link is missing or unsafe: $path"
 		fi
 	done
 	[ "$found" -eq 1 ] || fail "no protocol share links were found in $CONFIG_DIR"
+}
+
+show_export() {
+	[ "$#" -eq 2 ] || fail "export requires: anytls <sing-box|mihomo|v2rayn>"
+	[ "$1" = anytls ] || fail "only AnyTLS client export is supported"
+	case "$2" in
+		sing-box) path="$CONFIG_DIR/client-anytls-sing-box-outbound.json" ;;
+		mihomo) path="$CONFIG_DIR/client-anytls-mihomo.yaml" ;;
+		v2rayn) path="$CONFIG_DIR/share-anytls-v2rayn.txt" ;;
+		*) fail "AnyTLS export must be sing-box, mihomo, or v2rayn" ;;
+	esac
+	require_installation
+	if [ ! -f "$path" ] || [ -L "$path" ]; then
+		fail "authenticated AnyTLS export is missing or unsafe: $path"
+	fi
+	printf 'WARNING: exported AnyTLS data contains client credentials.\n' >&2
+	cat "$path"
 }
 
 show_logs() {
@@ -551,6 +565,10 @@ case "$command" in
 	qr)
 		[ "$#" -le 2 ] || fail "qr accepts at most one protocol"
 		show_qr "${2:-all}"
+		;;
+	export)
+		shift
+		show_export "$@"
 		;;
 	logs)
 		[ "$#" -le 2 ] || fail "logs accepts at most one line count"
